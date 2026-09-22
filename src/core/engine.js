@@ -51,7 +51,11 @@ export function resolveSchedule(date, weekOverride, overrides, program) {
   const weekType = weekOverride === "auto" ? auto : weekOverride;
   const key = dateKey(date);
 
-  const base = (program.schedule[weekType] || {})[date.getDay()] || {};
+  // program.startDate ("YYYY-MM-DD", optional): before it the default week is
+  // empty, so a new client's Calendar starts on day one. Overrides still
+  // apply. Programs without startDate behave exactly as before.
+  const beforeStart = typeof program.startDate === "string" && key < program.startDate;
+  const base = beforeStart ? {} : (program.schedule[weekType] || {})[date.getDay()] || {};
   const ov = (overrides && overrides[key]) || {};
 
   const skip = typeof ov.skip === "string" && SKIP_LABEL[ov.skip] ? ov.skip : null;

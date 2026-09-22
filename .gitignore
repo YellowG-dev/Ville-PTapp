@@ -1,0 +1,21 @@
+# Downloaded libraries. Recreated by "npm install" from package.json,
+# so there is no reason to store them in git — it would be thousands of files.
+node_modules/
+
+# Records exactly which library versions npm chose. Small, and worth keeping,
+# so it is NOT ignored. Listed here only as a reminder not to delete it.
+# package-lock.json
+
+# Operating-system clutter
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Editor and log noise
+*.log
+npm-debug.log*
+.vscode/
+
+# NOTE: bundle.js and styles.css are NOT ignored, on purpose.
+# GitHub Pages serves those two files directly to the phone. If they are not
+# committed, the app will not load.

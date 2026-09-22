@@ -1,0 +1,20 @@
+{
+  "name": "codedev-pt-apps",
+  "private": true,
+  "type": "module",
+  "description": "Shared toolchain config for the three PT app repos. Each repo has its own node_modules.",
+  "scripts": {
+    "build": "npx esbuild src/entry.jsx --bundle --minify --outfile=bundle.js --loader:.jsx=jsx && tailwindcss -i ./src/input.css -o ./styles.css"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.112.4",
+    "lucide-react": "1.35.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "recharts": "3.10.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "4.3.3",
+    "esbuild": "0.28.2"
+  }
+}

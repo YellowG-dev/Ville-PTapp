@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Ville · Daily Log</title>
+<meta name="theme-color" content="#10131A" />
+
+<!-- Browser tab icon -->
+<link rel="icon" type="image/png" href="./favicon.png" />
+
+<!-- iOS: adding to home screen uses this, not the favicon, and ignores the manifest below -->
+<link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Ville PT" />
+
+<!-- Android/Chrome: enables "Add to Home Screen" as a standalone app with proper icon -->
+<link rel="manifest" href="./manifest.json" />
+
+<style>
+  html, body, #root { background: #10131A; min-height: 100%; margin: 0; }
+</style>
+<link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+<div id="root"></div>
+<script src="./bundle.js"></script>
+</body>
+</html>

@@ -155,9 +155,9 @@ export function ProgramView({ Section, ExerciseList, theme }) {
           1–3 good reps left. When every set reaches the top of the rep range, add weight and drop back to the bottom.
         </p>
         <p className="text-xs">
-          <span style={{ color: TEXT_SECONDARY }} className="font-semibold">The toe joint:</span> no floor split
-          squats — the Bulgarian (rear-foot-elevated) version only, rear foot laces-down. Push through the whole foot,
-          not the toes. If a movement aggravates the joint, log a swap and note it.
+          <span style={{ color: TEXT_SECONDARY }} className="font-semibold">The toe joint:</span> do the prescribed
+          movement; if it hurts, pick an alternative from the swap list (skip the floor split squat — the Bulgarian
+          version is the one that suits the foot). Push through the whole foot, not the toes.
         </p>
         <p className="text-xs">
           <span style={{ color: TEXT_SECONDARY }} className="font-semibold">Single-leg work:</span> log the weaker
@@ -185,7 +185,7 @@ export function ProgramView({ Section, ExerciseList, theme }) {
         <ExerciseList exercises={[...BLOCKS.bike.tempo.exercises, ...BLOCKS.bike.easy.exercises].filter((e) => !e.type)} color={CATS.bike.color} />
       </Section>
 
-      <Section title="Yoga and daily mobility" subtitle="Ankles and the deep squat" color={CATS.mobility.color}>
+      <Section title="Yoga and daily mobility" subtitle="Weekly class + daily ankle and deep-squat work" color={CATS.mobility.color}>
         <ExerciseList exercises={BLOCKS.yoga.session.exercises} color={CATS.yoga.color} />
         <ExerciseList exercises={MOBILITY} color={CATS.mobility.color} />
         <p style={{ color: TEXT_MUTED }} className="text-xs">

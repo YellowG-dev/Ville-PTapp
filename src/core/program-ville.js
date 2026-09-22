@@ -13,9 +13,10 @@
  *
  * Constraint: osteoarthritis in a right-foot toe joint. No fast running for
  * long, especially on hard surfaces. Floor split squat is out; the
- * rear-foot-elevated (Bulgarian) split squat is fine. That is why the
- * Bulgarian split squat carries NO `pattern`: the shared pattern library
- * offers "Split squat" as a swap, and it must not appear here.
+ * rear-foot-elevated (Bulgarian) split squat is fine. Every lift still has
+ * swap options: Ville does the prescribed movement and picks an alternative
+ * himself when one is painful (John, 22 Sep). The unilateral-squat list does
+ * include the floor split squat — he knows to skip it.
  *
  * Cardio is one slot per sport (run, bike, yoga) — decided 22 Sep. Number
  * IDs are unique per slot (run-*, bike-*) so a run and a ride on the same
@@ -40,7 +41,7 @@ export const SLOTS = ["strength", "run", "bike", "yoga"];
 /* ------------------------------- Strength -------------------------------- */
 
 const BSS = {
-  id: "bss",
+  id: "bss", pattern: "unilateral-squat",
   name: "Bulgarian split squat",
   presc: "4×6–10/leg",
   sets: 4,
@@ -89,6 +90,9 @@ const GYM_A = {
       video: "https://www.youtube.com/watch?v=hqI59xXChFk" },
     { id: "hip-thrust", pattern: "hip-thrust", name: "Barbell hip thrust", presc: "3×8–12", sets: 3,
       video: "https://www.youtube.com/watch?v=S_uZP4UH6J0" },
+    { id: "calf-raise", pattern: "calf", name: "Standing calf raise", presc: "3×10–15", sets: 3,
+      detail: "Full range, slow down. Drop or swap it on days the toe joint objects.",
+      video: "https://www.youtube.com/watch?v=SVtg-1loH4c" },
     TIB_RAISE,
     { id: "pallof", pattern: "anti-rotation", name: "Pallof press", presc: "2×10–12/side", sets: 2,
       video: "https://www.youtube.com/watch?v=LA6Uc5yIV1c" },
@@ -112,6 +116,9 @@ const GYM_B = {
     { id: "sl-rdl", pattern: "single-leg-hinge", name: "Single-leg RDL (dumbbell)", presc: "3×8–10/leg", sets: 3,
       detail: "Log the weaker leg.",
       video: "https://www.youtube.com/watch?v=18CzQrq-Z7I" },
+    { id: "calf-seated", pattern: "calf", name: "Seated calf raise", presc: "3×12–20", sets: 3,
+      detail: "Drop or swap it on days the toe joint objects.",
+      video: "https://www.youtube.com/watch?v=hWO8AbhWEUI" },
     SIDE_PLANK,
     DEAD_BUG,
   ],
@@ -162,6 +169,8 @@ const NO_GYM = {
       video: "https://www.youtube.com/watch?v=XckEEwa1BPI" },
     { id: "bw-pull-apart", pattern: "rear-delt", name: "Band pull-apart", presc: "3×15–20", sets: 3,
       video: "https://www.youtube.com/watch?v=WqdNDTTe-9g" },
+    { id: "bw-calf", pattern: "calf", name: "Single-leg calf raise (step)", presc: "3×12–20/leg", sets: 3,
+      video: "https://www.youtube.com/watch?v=SVtg-1loH4c" },
     TIB_RAISE,
     SIDE_PLANK,
     DEAD_BUG,
@@ -220,17 +229,13 @@ const BIKE_EASY = {
   ],
 };
 
+// A guided class he attends, not a list of moves — one tick (John, 22 Sep).
 const YOGA = {
-  label: "Yoga — Ankles, hips, deep squat",
+  label: "Yoga class",
   cat: "yoga",
-  subtitle: "≈30 min · usually Tuesday evening",
+  subtitle: "Guided class · usually Tuesday evening",
   exercises: [
-    { id: "yoga", name: "Runner's yoga", presc: "30 min · follow along",
-      detail: "Where a pose curls the toes under, keep the foot flat instead if the joint objects.",
-      video: "https://www.youtube.com/watch?v=0hTllAb4XGg",
-      altName: "Yin yoga for runners (30 min)",
-      altVideo: "https://www.youtube.com/watch?v=G1VILbdkXPo",
-      sets: null },
+    { id: "yoga", name: "Yoga class", presc: "Guided class — tick when done", sets: null },
   ],
 };
 

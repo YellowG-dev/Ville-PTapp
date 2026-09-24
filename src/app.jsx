@@ -28,6 +28,9 @@ import {
   configureSync, pullAndMerge, queueLogDay, queueOverrideChanges,
   queueSettings, flushNow, watchConnectivity,
 } from "./core/sync.js";
+import {
+  loadWearables, connectUrl, syncVendor, buildRecovery, connectionLabel, fmtSleep, fmtNum,
+} from "./core/wearables.js";
 
 /* --------------------------------- Config -------------------------------- */
 
@@ -187,6 +190,51 @@ function AppInner({ setThemeId }) {
     })();
     return () => { dead = true; };
   }, [authUser]);
+
+  // Wearables follow the session too. On every open this reads what is already
+  // stored, then asks the server to fetch anything new and re-reads — so the
+  // panel appears immediately from stored rows rather than waiting on Oura.
+  // A failure anywhere in here leaves the app exactly as it was: this is an
+  // addition to the log, never a precondition for using it.
+  const [wearables, setWearables] = useState({ connections: [], days: [], workouts: [] });
+  const [wearBusy, setWearBusy] = useState(null);
+  const [wearMsg, setWearMsg] = useState("");
+  const wearSyncedRef = useRef(null);
+
+  useEffect(() => {
+    let dead = false;
+    if (!authUser) {
+      setWearables({ connections: [], days: [], workouts: [] });
+      wearSyncedRef.current = null;
+      return;
+    }
+    (async () => {
+      const first = await loadWearables();
+      if (dead || !first.ok) return;
+      setWearables(first);
+
+      // Once per signed-in session, not on every re-render.
+      if (wearSyncedRef.current === authUser.id) return;
+      wearSyncedRef.current = authUser.id;
+      const connected = first.connections.filter((c) => c.status !== "revoked");
+      if (!connected.length) return;
+      await Promise.all(connected.map((c) => syncVendor(c.vendor, 14)));
+      if (dead) return;
+      const after = await loadWearables();
+      if (!dead && after.ok) setWearables(after);
+    })();
+    return () => { dead = true; };
+  }, [authUser]);
+
+  const recovery = useMemo(
+    () => buildRecovery(wearables.days, wearables.workouts),
+    [wearables.days, wearables.workouts]
+  );
+  const connByVendor = useMemo(() => {
+    const out = {};
+    (wearables.connections || []).forEach((c) => (out[c.vendor] = c));
+    return out;
+  }, [wearables.connections]);
   const [copyStatus, setCopyStatus] = useState("");
   const [importStatus, setImportStatus] = useState("");
   const [selectedExerciseId, setSelectedExerciseId] = useState(null);
@@ -949,6 +997,65 @@ function AppInner({ setThemeId }) {
                       )}
                     </div>
                   </div>
+
+                  <div style={{ borderColor: BORDER }} className="border-t mt-3 pt-3">
+                    <p className="text-xs font-semibold">Oura and Polar</p>
+                    <p style={{ color: TEXT_MUTED }} className="text-[11px] mt-0.5 mb-2">
+                      Bring in sleep, recovery and recorded sessions. Approving access opens Oura or Polar in your
+                      browser; come back here afterwards. You can disconnect from their app or website at any time.
+                    </p>
+                    {[["oura", "Oura"], ["polar", "Polar"]].map(([vendor, label]) => {
+                      const conn = connByVendor[vendor];
+                      const linked = Boolean(conn) && conn.status !== "revoked";
+                      return (
+                        <div key={vendor} className="flex items-center justify-between gap-2 mb-1.5">
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-medium">{label}</p>
+                            <p style={{ color: TEXT_MUTED }} className="text-[11px]">
+                              {connectionLabel(conn)}
+                            </p>
+                          </div>
+                          <div className="flex gap-1.5 shrink-0">
+                            {linked && (
+                              <button onClick={async () => {
+                                        setWearBusy(vendor);
+                                        setWearMsg("Fetching…");
+                                        const r = await syncVendor(vendor, 30);
+                                        const after = await loadWearables();
+                                        if (after.ok) setWearables(after);
+                                        setWearBusy(null);
+                                        setWearMsg(r.ok ? "Up to date." : r.error || "Could not fetch.");
+                                      }}
+                                      disabled={wearBusy === vendor}
+                                      style={{ borderColor: BORDER, opacity: wearBusy === vendor ? 0.6 : 1 }}
+                                      className="text-[11px] font-semibold px-2.5 py-1 rounded-lg border">
+                                Fetch
+                              </button>
+                            )}
+                            <button onClick={async () => {
+                                      setWearBusy(vendor);
+                                      setWearMsg("Opening…");
+                                      const r = await connectUrl(vendor);
+                                      setWearBusy(null);
+                                      if (r.ok && r.url) window.location.href = r.url;
+                                      else setWearMsg(r.error || "Could not start.");
+                                    }}
+                                    disabled={wearBusy === vendor}
+                                    style={{ background: linked ? "transparent" : ACCENT,
+                                             color: linked ? TEXT_SECONDARY : ON_ACCENT,
+                                             borderColor: BORDER,
+                                             opacity: wearBusy === vendor ? 0.6 : 1 }}
+                                    className="text-[11px] font-semibold px-2.5 py-1 rounded-lg border">
+                              {linked ? "Reconnect" : "Connect"}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {wearMsg && (
+                      <p style={{ color: TEXT_MUTED }} className="text-[11px] mt-1">{wearMsg}</p>
+                    )}
+                  </div>
                 </>
               ) : (
                 <>
@@ -1643,7 +1750,7 @@ function AppInner({ setThemeId }) {
       {/* ------------------------------- Progress ----------------------------- */}
       {view === "history" && (
         <div className="px-4 max-w-md mx-auto space-y-3">
-          {historyRows.length === 0 ? (
+          {historyRows.length === 0 && !recovery ? (
             <div style={{ background: CARD, borderColor: BORDER }} className="rounded-2xl border p-6 text-center">
               <CalendarDays size={22} style={{ color: TEXT_MUTED }} className="mx-auto mb-2" />
               <p className="text-sm font-medium">Nothing here yet</p>
@@ -1661,6 +1768,52 @@ function AppInner({ setThemeId }) {
                   </div>
                 ))}
               </div>
+
+              {recovery && (
+                <div style={{ background: CARD, borderColor: BORDER }} className="rounded-2xl border p-4">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <h2 style={{ fontFamily: FONT_DISPLAY }} className="text-sm font-semibold">Recovery</h2>
+                    <span style={{ color: TEXT_MUTED, fontFamily: FONT_MONO }} className="text-[10px]">
+                      {recovery.latest ? recovery.latest.day.slice(5) : ""}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    {[[fmtSleep(recovery.latest?.sleep_minutes), "Sleep"],
+                      [fmtNum(recovery.latest?.readiness), "Readiness"],
+                      [fmtNum(recovery.latest?.resting_hr), "Rest HR"],
+                      [fmtNum(recovery.latest?.hrv), "HRV"]].map(([v, l]) => (
+                      <div key={l} className="text-center">
+                        <p style={{ fontFamily: FONT_MONO }} className="text-sm font-semibold">{v}</p>
+                        <p style={{ color: TEXT_MUTED }} className="text-[10px] mt-0.5 uppercase tracking-wide">{l}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {recovery.series.some((p) => p.readiness != null || p.sleepH != null) && (
+                    <div style={{ width: "100%", height: 120 }} className="mt-3">
+                      <ResponsiveContainer>
+                        <LineChart data={recovery.series} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
+                          <CartesianGrid stroke={BORDER} strokeDasharray="3 3" vertical={false} />
+                          <XAxis dataKey="label" tick={{ fill: TEXT_MUTED, fontSize: 10 }} axisLine={{ stroke: BORDER }} tickLine={false} interval="preserveStartEnd" />
+                          <YAxis yAxisId="l" domain={[0, 100]} tick={{ fill: TEXT_MUTED, fontSize: 10 }} axisLine={false} tickLine={false} width={28} />
+                          <YAxis yAxisId="r" orientation="right" hide domain={[0, 12]} />
+                          <Tooltip contentStyle={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, fontFamily: FONT_MONO, fontSize: 11 }}
+                                   formatter={(v, name) => [name === "Sleep" ? `${v} h` : v, name]} />
+                          <Line yAxisId="l" type="monotone" dataKey="readiness" name="Readiness" stroke={ACCENT} strokeWidth={2} dot={false} connectNulls />
+                          <Line yAxisId="r" type="monotone" dataKey="sleepH" name="Sleep" stroke={TEXT_SECONDARY} strokeWidth={2} dot={false} connectNulls />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                  <p style={{ color: TEXT_MUTED }} className="text-[11px] mt-2">
+                    7-day: {fmtSleep(recovery.avg7.sleep)} sleep · readiness {fmtNum(recovery.avg7.readiness)} · resting
+                    HR {fmtNum(recovery.avg7.rhr)}
+                    {recovery.sessions30 > 0
+                      ? ` · ${recovery.sessions30} recorded session${recovery.sessions30 === 1 ? "" : "s"} in 30 days`
+                      : ""}
+                    . Nights your device did not record stay blank rather than counting as zero.
+                  </p>
+                </div>
+              )}
 
               {trackedCharts.map((c) => (
                 <ChartCard key={c.id} {...c} />

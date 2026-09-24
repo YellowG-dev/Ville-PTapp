@@ -22,7 +22,7 @@ import { THEMES, THEME_IDS } from "./core/themes.js";
 import { variantsFor } from "./core/patterns.js";
 import { computeStreak, buildHeatmapCells } from "./core/stats.js";
 import { createStore, localStorageAdapter } from "./core/storage.js";
-import { isConfigured, currentUser, onAuthChange, sendMagicLink, signOut,
+import { isConfigured, currentUser, onAuthChange, sendMagicLink, verifyCode, signOut,
          getCoachSharing, setCoachSharing } from "./core/supabase.js";
 import {
   configureSync, pullAndMerge, queueLogDay, queueOverrideChanges,
@@ -163,6 +163,8 @@ function AppInner({ setThemeId }) {
   const [authUser, setAuthUser] = useState(null);
   const [syncState, setSyncState] = useState({ status: "offline", pendingCount: 0, lastSyncedAt: null });
   const [emailDraft, setEmailDraft] = useState("");
+  const [codeDraft, setCodeDraft] = useState("");
+  const [codeSent, setCodeSent] = useState(false);
   const [authMsg, setAuthMsg] = useState("");
   // { linked, enabled } — linked false means no coach, which is not the same
   // as linked with sharing switched off.
@@ -962,11 +964,31 @@ function AppInner({ setThemeId }) {
                     <button onClick={async () => {
                               setAuthMsg("Sending…");
                               const r = await sendMagicLink(emailDraft);
-                              setAuthMsg(r.ok ? "Check your email for a sign-in link." : r.error);
+                              setCodeSent(r.ok);
+                              setAuthMsg(r.ok
+                                ? "Check your email. On this phone, type the 6-digit code below — the link opens in Safari instead of here."
+                                : r.error);
                             }}
                             style={{ background: ACCENT, color: BG }}
-                            className="shrink-0 text-xs font-semibold px-3 rounded-lg">Send link</button>
+                            className="shrink-0 text-xs font-semibold px-3 rounded-lg">Send code</button>
                   </div>
+                  {codeSent && (
+                    <div className="flex gap-1.5 mt-1.5">
+                      <input type="text" inputMode="numeric" autoComplete="one-time-code" value={codeDraft}
+                             placeholder="6-digit code" aria-label="Six-digit sign-in code"
+                             onChange={(e) => setCodeDraft(e.target.value)}
+                             style={{ borderColor: BORDER, background: BG, color: TEXT_PRIMARY, fontFamily: FONT_MONO }}
+                             className="flex-1 min-w-0 text-xs px-2.5 py-1.5 rounded-lg border" />
+                      <button onClick={async () => {
+                                setAuthMsg("Checking…");
+                                const r = await verifyCode(emailDraft, codeDraft);
+                                if (r.ok) { setCodeSent(false); setCodeDraft(""); setAuthMsg("Signed in."); }
+                                else setAuthMsg(r.error);
+                              }}
+                              style={{ background: ACCENT, color: BG }}
+                              className="shrink-0 text-xs font-semibold px-3 rounded-lg">Sign in</button>
+                    </div>
+                  )}
                 </>
               )}
               {authMsg && <p style={{ color: TEXT_MUTED }} className="text-[11px] mt-2">{authMsg}</p>}

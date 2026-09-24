@@ -83,6 +83,32 @@ export async function sendMagicLink(email) {
   }
 }
 
+/**
+ * Sign in with the 6-digit code from the same email as the link.
+ * iOS opens a link from Mail in Safari, and an installed home-screen app has
+ * its own separate storage, so a link can never sign in the installed app.
+ * The code can, because it is typed inside the app itself.
+ */
+export async function verifyCode(email, code) {
+  const c = getClient();
+  if (!c) return { ok: false, error: "This app is not connected to an account service." };
+
+  const address = (email || "").trim();
+  const token = String(code || "").replace(/\D/g, "");
+  if (!address || !address.includes("@")) {
+    return { ok: false, error: "Enter the email address the code was sent to." };
+  }
+  if (token.length !== 6) return { ok: false, error: "The code is six digits." };
+
+  try {
+    const { error } = await c.auth.verifyOtp({ email: address, token, type: "email" });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: "Could not reach the server. Check your connection." };
+  }
+}
+
 /** The signed-in user, or null. Never throws. */
 export async function currentUser() {
   const c = getClient();

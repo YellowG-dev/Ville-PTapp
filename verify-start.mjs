@@ -2,7 +2,10 @@
 import fs from "fs";
 process.on("uncaughtException", (e) => { console.log("FAIL (crash): " + e.message); process.exit(1); });
 const { resolveSchedule } = await import("./src/core/engine.js");
-const progFile = fs.readdirSync("./src/core").find((f) => /^program-.*\.js$/.test(f));
+// program-schema.js also matches /^program-.*\.js$/, and sorts before a client
+// file whose name starts past "s" (program-ville.js), so without this guard the
+// schema is imported instead of the programme and P.startDate throws.
+const progFile = fs.readdirSync("./src/core").find((f) => /^program-.*\.js$/.test(f) && f !== "program-schema.js");
 const P = (await import(`./src/core/${progFile}`)).default;
 let pass = 0, fail = 0;
 const check = (n, ok) => { ok ? pass++ : fail++; console.log((ok ? "ok   " : "FAIL ") + n); };

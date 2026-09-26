@@ -104,6 +104,11 @@ const THEME = {
 
 const PROGRAM_VIEW = JSON.parse(readFileSync("phase6/ville-programview.json", "utf8"));
 
+// Fixture ids are hyphen-free on purpose. Tailwind scans this whole repo and
+// extracts sub-candidates from hyphenated tokens, so an id shaped like a padding
+// utility (a pr or pl prefix, a hyphen, then a number) is compiled into
+// styles.css as real CSS, even nested inside a longer id. Keep new fixture ids
+// in this camel form and the build output stays clean.
 const ex = (id, name, presc) => ({ id, name, presc });
 
 /**
@@ -144,28 +149,28 @@ const BASE = {
   },
   blocks: {
     strength: {
-      a: { label: "Gym A — Legs", subtitle: "Squat pattern first", exercises: [ex("sq-1", "Goblet squat", "3×8"), ex("sq-2", "Bulgarian split squat", "3×8/side")] },
-      b: { label: "Gym B — Full body", subtitle: "Hinge and push", exercises: [ex("hn-1", "Trap-bar deadlift", "3×5"), ex("pr-1", "dumbbell bench press", "3×8")] },
-      c: { label: "Gym C — Upper + core", subtitle: "Pull and carry", exercises: [ex("pl-1", "Chest-supported row", "3×10"), ex("cr-1", "Suitcase carry", "3×40 m")] },
-      nogym: { label: "No-Gym — Bodyweight + Band", exercises: [ex("bw-1", "Band squat", "3×15"), ex("bw-2", "Push-up", "3×12")] },
+      a: { label: "Gym A — Legs", subtitle: "Squat pattern first", exercises: [ex("fxSquatA", "Goblet squat", "3×8"), ex("fxSplitSquatA", "Bulgarian split squat", "3×8/side")] },
+      b: { label: "Gym B — Full body", subtitle: "Hinge and push", exercises: [ex("fxHingeB", "Trap-bar deadlift", "3×5"), ex("fxPressB", "dumbbell bench press", "3×8")] },
+      c: { label: "Gym C — Upper + core", subtitle: "Pull and carry", exercises: [ex("fxRowC", "Chest-supported row", "3×10"), ex("fxCarryC", "Suitcase carry", "3×40 m")] },
+      nogym: { label: "No-Gym — Bodyweight + Band", exercises: [ex("fxBandSquat", "Band squat", "3×15"), ex("fxPushUp", "Push-up", "3×12")] },
     },
     run: {
-      easy: { label: "Run — Easy (PK)", exercises: [ex("run-easy", "Easy run", "45–60 min · PK2"), { id: "run-note", type: "note", name: "Soft surfaces only", presc: "" }] },
-      long: { label: "Run — Long (PK)", exercises: [ex("run-long", "Long run", "~2 h · PK1–PK2")] },
+      easy: { label: "Run — Easy (PK)", exercises: [ex("fxRunEasy", "Easy run", "45–60 min · PK2"), { id: "fxRunNote", type: "note", name: "Soft surfaces only", presc: "" }] },
+      long: { label: "Run — Long (PK)", exercises: [ex("fxRunLong", "Long run", "~2 h · PK1–PK2")] },
     },
     bike: {
-      tempo: { label: "Bike — Tempo (VK)", exercises: [ex("bike-tempo", "Indoor bike tempo", "4×8 min · VK"), { id: "bike-note", type: "note", name: "Max HR 173 indoors", presc: "" }] },
-      easy: { label: "Bike — Easy (PK)", exercises: [ex("bike-easy", "Indoor bike easy", "60 min · PK1")] },
+      tempo: { label: "Bike — Tempo (VK)", exercises: [ex("fxBikeTempo", "Indoor bike tempo", "4×8 min · VK"), { id: "fxBikeNote", type: "note", name: "Max HR 173 indoors", presc: "" }] },
+      easy: { label: "Bike — Easy (PK)", exercises: [ex("fxBikeEasy", "Indoor bike easy", "60 min · PK1")] },
     },
     yoga: {
-      session: { label: "Yoga class", exercises: [ex("yoga-1", "Yoga class", "60–75 min")] },
+      session: { label: "Yoga class", exercises: [ex("fxYoga", "Yoga class", "60–75 min")] },
     },
     // Case 5's fixture: one real movement and one prose note in the same block.
     typed: {
-      one: { label: "Typed block", exercises: [ex("typed-real", "Real movement", "3×10"), { id: "typed-note", type: "note", name: "Prose note inside a block", presc: "" }] },
+      one: { label: "Typed block", exercises: [ex("fxTypedReal", "Real movement", "3×10"), { id: "fxTypedNote", type: "note", name: "Prose note inside a block", presc: "" }] },
     },
   },
-  mobility: [ex("mob-1", "Ankle dorsiflexion", "30–45s/side"), ex("mob-2", "Deep squat hold", "60s")],
+  mobility: [ex("fxMobAnkle", "Ankle dorsiflexion", "30–45s/side"), ex("fxMobSquat", "Deep squat hold", "60s")],
   schedule: {
     A: {
       1: { strength: "a", run: null, bike: null, yoga: null },

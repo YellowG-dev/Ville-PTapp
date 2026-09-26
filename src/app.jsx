@@ -8,7 +8,7 @@ import {
 } from "recharts";
 
 import {
-  PROGRAM, THEME, makeTheme, DEFAULT_THEME_ID, ProgramView, CLIENT_LABEL, CLIENT_NAME, STORAGE_PREFIX,
+  PROGRAM as COMPILED_PROGRAM, THEME, makeTheme, DEFAULT_THEME_ID, ProgramView, CLIENT_LABEL, CLIENT_NAME, STORAGE_PREFIX,
   START_DATE, RAMP_WEEKS, APP_VERSION,
 } from "./config.jsx";
 // Slot metadata and blocks are read off PROGRAM, never off the compiled file, so
@@ -18,6 +18,9 @@ import {
 import {
   blocksFor, slotMetaFor, slotOptionsFor,
 } from "./core/program-schema.js";
+import {
+  activeProgramAtStartup, refreshPrograms, cachedRows,
+} from "./core/programs.js";
 
 import {
   resolveSchedule, buildSections, buildHistoryRows, isTaskDone, countableTasks,
@@ -57,6 +60,24 @@ function useTheme() {
 }
 
 const store = createStore(localStorageAdapter(), STORAGE_PREFIX);
+
+/* ------------------------------ The programme ----------------------------- */
+// Resolved ONCE here, synchronously, from the localStorage cache — the same move
+// the theme made when it went to context: only the binding changes, so every
+// existing PROGRAM reference below is untouched.
+//
+// Synchronous on purpose. The app has to render the right session in a gym
+// basement, offline, signed out, before any fetch could return. A delivered
+// definition that fails validation is discarded here and the compiled file is
+// used instead, so a bad publish cannot render a broken day.
+//
+// It is deliberately NOT re-resolved while the app is open: a client reading
+// today's session must not have it change under them. refreshPrograms() caches
+// what it finds and reports it; the new programme applies on the next open.
+const PROGRAM_SOURCE = activeProgramAtStartup(COMPILED_PROGRAM, STORAGE_PREFIX, {
+  clientName: CLIENT_NAME,
+});
+const PROGRAM = PROGRAM_SOURCE.program;
 
 // ==time-input:start
 // Number entry. Plain numbers behave exactly as before (comma or dot decimal).
@@ -172,6 +193,10 @@ function AppInner({ setThemeId }) {
   // Account and sync. All inert when signed out.
   const [authUser, setAuthUser] = useState(null);
   const [syncState, setSyncState] = useState({ status: "offline", pendingCount: 0, lastSyncedAt: null });
+  // Set when a refresh finds a newer programme than the one running. It is not
+  // applied now — see the PROGRAM_SOURCE comment — so this is what tells the
+  // client something is waiting. Phase 8 turns it into a proper notice.
+  const [programUpdate, setProgramUpdate] = useState(null);
   const [emailDraft, setEmailDraft] = useState("");
   const [codeDraft, setCodeDraft] = useState("");
   const [codeSent, setCodeSent] = useState(false);
@@ -305,10 +330,28 @@ function AppInner({ setThemeId }) {
       store.saveJSON("settings", merged.settings);
     };
 
+    // Programme delivery. Runs after the log merge because it is the less urgent
+    // of the two and must never delay the day the client came here to log.
+    // Failure is silent by design: the programme already on screen came from
+    // cache or from the compiled file and is a valid one either way.
+    const refresh = async (user) => {
+      const uid = user?.id || null;
+      if (!uid) return;
+      const r = await refreshPrograms({
+        prefix: STORAGE_PREFIX,
+        compiled: COMPILED_PROGRAM,
+        userId: uid,
+        clientName: CLIENT_NAME,
+        activeRowId: PROGRAM_SOURCE.rowId,
+      });
+      setProgramUpdate(r && r.ok && r.changed ? { rowId: r.rowId } : null);
+    };
+
     let stopAuth = () => {};
     const stopConn = watchConnectivity();
-    stopAuth = onAuthChange(attach);
-    currentUser().then(attach);
+    const attachThenRefresh = async (user) => { await attach(user); await refresh(user); };
+    stopAuth = onAuthChange(attachThenRefresh);
+    currentUser().then(attachThenRefresh);
 
     return () => { stopAuth(); stopConn(); };
   }, []);
@@ -1130,7 +1173,14 @@ function AppInner({ setThemeId }) {
                 {importStatus && <span style={{ color: TEXT_MUTED }} className="text-[11px]">{importStatus}</span>}
               </div>
             </div>
-            <p style={{ color: TEXT_MUTED }} className="text-[10px]">v{APP_VERSION}</p>
+            {/* Where today's programme came from. Worth showing: "compiled" after
+                a coach has published means delivery is not reaching this app,
+                and that is otherwise invisible. */}
+            <p style={{ color: TEXT_MUTED }} className="text-[10px]">
+              v{APP_VERSION} · programme {PROGRAM_SOURCE.source}
+              {PROGRAM_SOURCE.rowId ? ` (${PROGRAM_SOURCE.rowId})` : ""}
+              {programUpdate ? " · update ready, reopen the app" : ""}
+            </p>
           </div>
         )}
 

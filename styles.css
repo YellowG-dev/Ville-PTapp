@@ -703,6 +703,9 @@
     -webkit-user-select: none;
     user-select: none;
   }
+  .block-2 {
+    block-size: calc(var(--spacing) * 2);
+  }
 }
 @property --tw-rotate-x {
   syntax: "*";

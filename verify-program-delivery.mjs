@@ -23,8 +23,9 @@ const need = (path) => {
   return readFileSync(path, "utf8");
 };
 
-const appSrc    = need("src/app.jsx");
-const schemaSrc = need("src/core/program-schema.js");
+const appSrc     = need("src/app.jsx");
+const schemaSrc  = need("src/core/program-schema.js");
+const programsSrc = need("src/core/programs.js");
 
 /* ------------------------------- STRUCTURE -------------------------------- */
 console.log("\nSTRUCTURE — app.jsx reads metadata off PROGRAM, not the compiled file");
@@ -55,6 +56,40 @@ for (const sym of ["SCHEMA_VERSION", "validate", "resolveForDate",
                    "slotMetaFor", "slotOptionsFor", "blocksFor", "mobilityFor"]) {
   ok(`exports ${sym}`, new RegExp(`export (const|function)\\s+${sym}\\b`).test(schemaSrc));
 }
+
+console.log("\nSTRUCTURE — delivery is wired in, and guarded");
+
+// The programme must be resolved once, synchronously, from cache.
+ok("app.jsx aliases the compiled programme",
+   /PROGRAM as COMPILED_PROGRAM/.test(code));
+ok("app.jsx resolves the active programme at startup",
+   /activeProgramAtStartup\(\s*COMPILED_PROGRAM/.test(code));
+ok("PROGRAM is bound from that result",
+   /const PROGRAM = PROGRAM_SOURCE\.program/.test(code));
+ok("app.jsx refreshes after sign-in", /refreshPrograms\(/.test(code));
+
+// THE guard. In the coach's own app an unfiltered query returns every client's
+// programme, and from 2026-09-28 the most recent one is Ville's. Proved in SQL
+// on 26 Sep 2026. If this check ever fails, the coach's app can load a client's
+// programme, so it is worth failing the build over.
+ok("the programs query filters by assigned_to",
+   /\.eq\(\s*["']assigned_to["']/.test(programsSrc));
+ok("rows are re-checked against the signed-in user",
+   /row\.assigned_to !== userId/.test(programsSrc));
+ok("rows are re-checked against this app's client",
+   /def\.clientName !== clientName/.test(programsSrc));
+ok("a delivered definition is validated before use",
+   /validate\(def\)/.test(programsSrc));
+ok("the cache is stamped with its owner",
+   /cached\.userId !== userId/.test(programsSrc));
+for (const sym of ["activeProgramAtStartup", "refreshPrograms", "cachedRows",
+                   "pickActive", "selectRows", "readCache", "writeCache", "clearCache"]) {
+  ok(`programs.js exports ${sym}`, new RegExp(`export (async )?function\\s+${sym}\\b`).test(programsSrc));
+}
+// supabase.js must NOT be imported at the top of programs.js: it pulls in
+// config.jsx, which node cannot parse, and would make this check impossible.
+ok("programs.js keeps supabase.js out of its top-level imports",
+   !/^import[^;]*["']\.\/supabase\.js["']/m.test(programsSrc));
 
 /* ------------------------------- BEHAVIOUR -------------------------------- */
 console.log("\nBEHAVIOUR — against the live engine");

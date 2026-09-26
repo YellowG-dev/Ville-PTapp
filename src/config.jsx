@@ -67,10 +67,14 @@ const DOW = [
   [1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"], [0, "Sun"],
 ];
 
+// Every read below is guarded. This view is the fallback for a programme with
+// no programView, and a delivered programme can rename or drop a block, so an
+// unguarded read here is a white screen on the Program tab rather than a
+// missing line. core/program-view.jsx is the guarded path for delivered data.
 function labelFor(slot, value) {
   const opt = (SLOT_OPTIONS[slot] || []).find((o) => o.value === value);
   const name = opt ? opt.label : value;
-  return `${SLOT_META[slot].label} — ${name}`;
+  return `${(SLOT_META[slot] || {}).label || slot} — ${name}`;
 }
 
 function dayLine(day) {
@@ -84,7 +88,7 @@ function dayLine(day) {
 
 export function ProgramView({ Section, ExerciseList, theme }) {
   const { ACCENT: A, ACCENT_2: B, TEXT_MUTED, TEXT_SECONDARY, FONT_MONO, CATS } = theme;
-  const week = SCHEDULE.A;
+  const week = (SCHEDULE && SCHEDULE.A) || {};
 
   return (
     <div className="px-4 max-w-md mx-auto space-y-3">
@@ -143,11 +147,14 @@ export function ProgramView({ Section, ExerciseList, theme }) {
         </p>
       </Section>
 
-      {["a", "b", "c"].map((k) => (
-        <Section key={k} title={BLOCKS.strength[k].label} subtitle={BLOCKS.strength[k].subtitle} color={A}>
-          <ExerciseList exercises={BLOCKS.strength[k].exercises} color={A} />
-        </Section>
-      ))}
+      {["a", "b", "c"].map((k) => {
+        const blk = BLOCKS.strength?.[k];
+        return blk && (
+          <Section key={k} title={blk.label} subtitle={blk.subtitle} color={A}>
+            <ExerciseList exercises={blk.exercises || []} color={A} />
+          </Section>
+        );
+      })}
 
       <Section title="Strength rules" color={A}>
         <p className="text-xs">
@@ -166,7 +173,7 @@ export function ProgramView({ Section, ExerciseList, theme }) {
       </Section>
 
       <Section title="No-Gym — Bodyweight + Band" subtitle="Swap any gym session to this when travelling" color={CATS.activity.color}>
-        <ExerciseList exercises={BLOCKS.strength.nogym.exercises} color={CATS.activity.color} />
+        <ExerciseList exercises={BLOCKS.strength?.nogym?.exercises || []} color={CATS.activity.color} />
         <p style={{ color: TEXT_MUTED }} className="text-xs">
           Climb the rep range first; once every set sits comfortably at the top, add band resistance, a loaded
           backpack, or a slower tempo.
@@ -174,7 +181,7 @@ export function ProgramView({ Section, ExerciseList, theme }) {
       </Section>
 
       <Section title="Running" subtitle="Volume over speed" color={CATS.run.color}>
-        <ExerciseList exercises={[...BLOCKS.run.easy.exercises, ...BLOCKS.run.long.exercises].filter((e) => !e.type)} color={CATS.run.color} />
+        <ExerciseList exercises={[...(BLOCKS.run?.easy?.exercises || []), ...(BLOCKS.run?.long?.exercises || [])].filter((e) => !e.type)} color={CATS.run.color} />
         <p style={{ color: TEXT_MUTED }} className="text-xs">
           Easy pace and soft surfaces protect the toe joint; speed on hard surfaces is what it tolerates least.
           Log distance, duration, average and max HR from Polar after each session. Duration takes h:mm:ss or mm:ss.
@@ -182,12 +189,12 @@ export function ProgramView({ Section, ExerciseList, theme }) {
       </Section>
 
       <Section title="Cycling" subtitle="One tempo session a week, at most" color={CATS.bike.color}>
-        <ExerciseList exercises={[...BLOCKS.bike.tempo.exercises, ...BLOCKS.bike.easy.exercises].filter((e) => !e.type)} color={CATS.bike.color} />
+        <ExerciseList exercises={[...(BLOCKS.bike?.tempo?.exercises || []), ...(BLOCKS.bike?.easy?.exercises || [])].filter((e) => !e.type)} color={CATS.bike.color} />
       </Section>
 
       <Section title="Yoga and daily mobility" subtitle="Weekly class + daily ankle and deep-squat work" color={CATS.mobility.color}>
-        <ExerciseList exercises={BLOCKS.yoga.session.exercises} color={CATS.yoga.color} />
-        <ExerciseList exercises={MOBILITY} color={CATS.mobility.color} />
+        <ExerciseList exercises={BLOCKS.yoga?.session?.exercises || []} color={CATS.yoga.color} />
+        <ExerciseList exercises={MOBILITY || []} color={CATS.mobility.color} />
         <p style={{ color: TEXT_MUTED }} className="text-xs">
           The mobility list is in priority order — stopping early still covers the ankle and the squat.
         </p>

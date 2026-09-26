@@ -18,6 +18,10 @@ import {
 import {
   blocksFor, slotMetaFor, slotOptionsFor,
 } from "./core/program-schema.js";
+// The Program tab rendered from the definition. Preferred whenever the active
+// programme carries a programView; config.jsx's hand-written ProgramView stays
+// as the fallback for a programme that does not.
+import { GeneratedProgramView } from "./core/program-view.jsx";
 import {
   activeProgramAtStartup, refreshPrograms, cachedRows,
 } from "./core/programs.js";
@@ -1948,7 +1952,11 @@ function AppInner({ setThemeId }) {
       )}
 
       {/* ------------------------------- Program ------------------------------ */}
-      {view === "program" && <ProgramView Section={Section} ExerciseList={ExerciseList} theme={activeTheme} />}
+      {view === "program" && (
+        Array.isArray(PROGRAM.programView) && PROGRAM.programView.length
+          ? <GeneratedProgramView program={PROGRAM} Section={Section} ExerciseList={ExerciseList} theme={activeTheme} />
+          : <ProgramView Section={Section} ExerciseList={ExerciseList} theme={activeTheme} />
+      )}
     </div>
   );
 }

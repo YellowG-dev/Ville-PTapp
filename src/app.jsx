@@ -9,8 +9,15 @@ import {
 
 import {
   PROGRAM, THEME, makeTheme, DEFAULT_THEME_ID, ProgramView, CLIENT_LABEL, CLIENT_NAME, STORAGE_PREFIX,
-  START_DATE, RAMP_WEEKS, APP_VERSION, MOBILITY, BLOCKS, SLOT_OPTIONS, SLOT_META,
+  START_DATE, RAMP_WEEKS, APP_VERSION,
 } from "./config.jsx";
+// Slot metadata and blocks are read off PROGRAM, never off the compiled file, so
+// a delivered definition is the single source of truth. blocksFor/slotMetaFor/
+// slotOptionsFor also mean an unknown slot degrades instead of throwing.
+// (MOBILITY was imported here but never used — config.jsx's ProgramView owns it.)
+import {
+  blocksFor, slotMetaFor, slotOptionsFor,
+} from "./core/program-schema.js";
 
 import {
   resolveSchedule, buildSections, buildHistoryRows, isTaskDone, countableTasks,
@@ -656,7 +663,7 @@ function AppInner({ setThemeId }) {
       });
     });
     const nameFor = (id) => {
-      for (const block of Object.values(BLOCKS.strength)) {
+      for (const block of Object.values(blocksFor(PROGRAM, "strength"))) {
         const ex = block.exercises.find((e) => e.id === id);
         if (ex) return ex.name;
       }
@@ -1965,7 +1972,7 @@ function CalendarView(p) {
           ON_ACCENT, KNOB, TINT, BADGE } = useTheme();
   const weeks = useMemo(() => getMonthMatrix(p.calYear, p.calMonth), [p.calYear, p.calMonth]);
   const selInfo = useMemo(() => resolveSchedule(p.calSelected, "auto", p.overrides, PROGRAM), [p.calSelected, p.overrides]);
-  const block = selInfo.slots.strength ? BLOCKS.strength[selInfo.slots.strength] : null;
+  const block = selInfo.slots.strength ? blocksFor(PROGRAM, "strength")[selInfo.slots.strength] || null : null;
   const monthLabel = new Date(p.calYear, p.calMonth, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
 
   const go = (delta) => {
@@ -2003,7 +2010,7 @@ function CalendarView(p) {
 
       {p.moveSource && (
         <div style={{ background: TINT.soft, borderColor: ACCENT }} className="flex items-center justify-between gap-2 rounded-xl border px-3 py-2 mb-3">
-          <p className="text-xs">Moving {SLOT_META[p.moveSource.slot].label.toLowerCase()} — tap the day to swap it with.</p>
+          <p className="text-xs">Moving {slotMetaFor(PROGRAM, p.moveSource.slot).label.toLowerCase()} — tap the day to swap it with.</p>
           <button onClick={() => p.setMoveSource(null)} style={{ color: ACCENT }} className="text-xs font-semibold shrink-0">Cancel</button>
         </div>
       )}
@@ -2060,7 +2067,7 @@ function CalendarView(p) {
                           ? <Ban size={9} style={{ color: CATS.check.color }} />
                           : <>
                               {PROGRAM.slots.map((sl) => i.slots[sl] && (
-                                <span key={sl} style={{ background: SLOT_META[sl].color }} className="w-1.5 h-1.5 rounded-full" />
+                                <span key={sl} style={{ background: slotMetaFor(PROGRAM, sl).color }} className="w-1.5 h-1.5 rounded-full" />
                               ))}
                               {i.activities.length > 0 && <span style={{ background: CATS.activity.color }} className="w-1.5 h-1.5 rounded-full" />}
                               {resolveTesting(d, p.overrides, PROGRAM).some((t) => t.due) && (
@@ -2080,7 +2087,7 @@ function CalendarView(p) {
       <div className="flex items-center gap-3 mt-3 flex-wrap">
         {PROGRAM.slots.map((sl) => (
           <span key={sl} className="flex items-center gap-1.5 text-[11px]" style={{ color: TEXT_SECONDARY }}>
-            <span style={{ background: SLOT_META[sl].color }} className="w-2 h-2 rounded-full" />{SLOT_META[sl].label}
+            <span style={{ background: slotMetaFor(PROGRAM, sl).color }} className="w-2 h-2 rounded-full" />{slotMetaFor(PROGRAM, sl).label}
           </span>
         ))}
         <span className="flex items-center gap-1.5 text-[11px]" style={{ color: TEXT_SECONDARY }}>
@@ -2123,9 +2130,9 @@ function CalendarView(p) {
         </div>
 
         {PROGRAM.slots.map((slotName) => {
-          const meta = SLOT_META[slotName];
+          const meta = slotMetaFor(PROGRAM, slotName);
           const value = selInfo.slots[slotName];
-          const blk = value ? BLOCKS[slotName][value] : null;
+          const blk = value ? blocksFor(PROGRAM, slotName)[value] || null : null;
           const SlotIcon = (CATS[meta.cat || slotName] && CATS[meta.cat || slotName].Icon) || meta.Icon || Dumbbell;
           const isEditing = p.editingBlock === slotName;
           const isMovingThis = p.moveSource && p.moveSource.slot === slotName;
@@ -2163,7 +2170,7 @@ function CalendarView(p) {
 
               {isEditing && (
                 <div className="flex gap-1.5 flex-wrap mt-2">
-                  {SLOT_OPTIONS[slotName].map((opt) => (
+                  {slotOptionsFor(PROGRAM, slotName).map((opt) => (
                     <button key={String(opt.value)}
                             onClick={() => { p.setBlock(p.calSelected, slotName, opt.value); p.setEditingBlock(null); }}
                             style={{ background: value === opt.value ? meta.color : "transparent",

@@ -34,7 +34,7 @@
 
 export const PROGRAM_ID = "ville";
 export const CLIENT_NAME = "Ville";
-export const APP_VERSION = "5.1.0-beta1";
+export const APP_VERSION = "5.2.0-beta1";
 
 export const SLOTS = ["strength", "run", "bike", "yoga"];
 
@@ -379,9 +379,17 @@ export const TESTING = {
 /* -------------------------------- Program -------------------------------- */
 
 export const PROGRAM = {
+  schemaVersion: 2,
   id: PROGRAM_ID,
   clientName: CLIENT_NAME,
   slots: SLOTS,
+  // Delivery metadata. These are the SAME keys the coach publishes into
+  // programs.definition, so a compiled programme and a fetched one are one
+  // shape and app.jsx needs only one code path. The named exports above are
+  // kept for the compiled ProgramView fallback.
+  slotMeta: SLOT_META,
+  slotOptions: SLOT_OPTIONS,
+  mobility: MOBILITY,
   blocks: BLOCKS,
   schedule: SCHEDULE,
   daily: DAILY,

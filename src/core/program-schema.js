@@ -216,68 +216,192 @@ export function validate(def) {
 /* ------------------------------ programView -------------------------------- */
 
 /**
- * The Program tab as data. Each section is one collapsible card, in order.
- * kind:
- *   "prose"     — title/subtitle plus paragraphs. Replaces hand-written JSX.
- *   "blocks"    — renders the exercise list of blocks[group][key] for each key.
- *   "mobility"  — renders the mobility list.
- *   "week"      — the generated default-week table (already generated today).
- *   "table"     — a small labelled grid, e.g. the heart-rate zones.
- *   "nutrition" — renders nutritionTargets.
+ * The Program tab as data.
+ *
+ * Each entry is one collapsible card, in order. A card has a title, an optional
+ * subtitle and colour, and an ordered `body` of parts.
+ *
+ * The body is a LIST, not a single kind. That is the shape the real Program tabs
+ * need: Ville's "Running" card is an exercise list followed by a prose note,
+ * "Yoga and daily mobility" is two exercise lists then a note, and Juha's
+ * nutrition card is a table plus two paragraphs. A one-kind-per-card model
+ * cannot express any of those.
+ *
+ * Body part types:
+ *   heading   — a bold lead-in line inside the card
+ *   paragraph — one block of prose; `strong` optionally bolds a lead-in phrase
+ *   lines     — short lines kept on separate rows (numbered goals, rules)
+ *   exercises — the exercise list of one or more blocks in a group
+ *   mobility  — the mobility list
+ *   week      — the generated default-week table, built from `schedule`
+ *   table     — a small labelled grid (heart-rate zones, macro targets)
+ *   nutrition — renders `nutritionTargets`
+ *
+ * A card may also set `titleFrom: { group, key }` to take its title and subtitle
+ * from a block rather than repeating them, and an `exercises` part may set
+ * `groupByBlock: true` to show each block's own label above its list.
+ *
+ * Colour is a TOKEN, never a raw hex: "accent", "accent2", or "cat:<name>" to
+ * follow a category colour. Themes are per-client and switchable, so a hex here
+ * would survive a theme change and clash with it.
  */
-export const PROGRAM_VIEW_KINDS = ["prose", "blocks", "mobility", "week", "table", "nutrition"];
+export const PROGRAM_VIEW_PART_TYPES = [
+  "heading", "paragraph", "lines", "exercises", "mobility", "week", "table", "nutrition",
+];
+
+const COLOR_TOKEN = /^(accent|accent2|cat:[a-zA-Z][a-zA-Z0-9_-]*)$/;
+
+/** Keys each part type defines, used to catch typos that would render nothing. */
+const PART_KEYS = {
+  heading:   ["text"],
+  paragraph: ["text", "strong"],
+  lines:     ["items"],
+  exercises: ["group", "keys", "excludeTyped", "groupByBlock", "label"],
+  mobility:  [],
+  week:      ["week"],
+  table:     ["columns", "rows"],
+  nutrition: [],
+};
 
 function validateProgramView(def, E, W) {
   const pv = def.programView;
-  if (!Array.isArray(pv)) { E("programView must be an array of sections"); return; }
-  pv.forEach((s, i) => {
+  if (!Array.isArray(pv)) { E("programView must be an array of cards"); return; }
+  if (!pv.length) { W("programView is an empty array — the Program tab would be blank"); return; }
+
+  pv.forEach((card, i) => {
     const at = `programView[${i}]`;
-    if (!isObj(s)) { E(`${at} is not an object`); return; }
-    if (!isStr(s.title)) E(`${at}.title must be a non-empty string`);
-    if (!PROGRAM_VIEW_KINDS.includes(s.kind)) {
-      E(`${at}.kind must be one of ${PROGRAM_VIEW_KINDS.join(", ")} (got ${JSON.stringify(s.kind)})`);
+    if (!isObj(card)) { E(`${at} is not an object`); return; }
+
+    // A card may take its title from a block instead of repeating it. Ville's
+    // three strength cards are titled "A — Legs" and so on; hardcoding those
+    // strings would leave a stale title the moment a coach renames the block,
+    // which is the same class of bug this whole contract removes.
+    if (card.titleFrom !== undefined) {
+      const tf = card.titleFrom;
+      if (!isObj(tf) || !isStr(tf.group) || !isStr(tf.key)) {
+        E(`${at}.titleFrom must be { group, key }`);
+      } else {
+        const grp = isObj(def.blocks) ? def.blocks[tf.group] : null;
+        if (!isObj(grp)) E(`${at}.titleFrom.group "${tf.group}" does not exist in blocks`);
+        else if (grp[tf.key] === undefined) E(`${at}.titleFrom references blocks.${tf.group}.${tf.key}, which does not exist`);
+      }
+      if (card.title !== undefined && !isStr(card.title)) E(`${at}.title must be a non-empty string when present`);
+    } else if (!isStr(card.title)) {
+      E(`${at}.title must be a non-empty string (or use titleFrom)`);
+    }
+    if (card.subtitle !== undefined && !isStr(card.subtitle)) E(`${at}.subtitle must be a non-empty string when present`);
+    if (card.color !== undefined) {
+      if (!isStr(card.color) || !COLOR_TOKEN.test(card.color)) {
+        E(`${at}.color must be "accent", "accent2" or "cat:<name>" (got ${JSON.stringify(card.color)}) — a raw hex would not follow a theme change`);
+      }
+    }
+    if (card.defaultOpen !== undefined && typeof card.defaultOpen !== "boolean") {
+      E(`${at}.defaultOpen must be a boolean`);
+    }
+    for (const k of Object.keys(card)) {
+      if (!["title", "subtitle", "color", "defaultOpen", "titleFrom", "body"].includes(k)) {
+        W(`${at} carries unrecognised key "${k}" — it will not render`);
+      }
+    }
+    if (!Array.isArray(card.body) || !card.body.length) {
+      E(`${at}.body must be a non-empty array of parts`);
       return;
     }
-    if (s.kind === "prose") {
-      if (!Array.isArray(s.paragraphs) || !s.paragraphs.length) E(`${at}.paragraphs must be a non-empty array`);
-      else s.paragraphs.forEach((p, j) => {
-        if (isStr(p)) return;
-        if (isObj(p) && isStr(p.text)) return;
-        E(`${at}.paragraphs[${j}] must be a string, or an object with a text string`);
-      });
-    }
-    if (s.kind === "blocks") {
-      if (!isStr(s.group)) { E(`${at}.group must name a block group`); return; }
-      if (isObj(def.blocks) && !isObj(def.blocks[s.group])) {
-        E(`${at}.group "${s.group}" does not exist in blocks`);
-        return;
-      }
-      if (s.keys !== undefined) {
-        if (!Array.isArray(s.keys) || !s.keys.length) { E(`${at}.keys must be a non-empty array when present`); return; }
-        // This is the check that stops the crash the compiled ProgramView has
-        // today: it hardcodes ["a","b","c"] and throws if a key is renamed.
-        for (const k of s.keys) {
-          if (isObj(def.blocks) && isObj(def.blocks[s.group]) && def.blocks[s.group][k] === undefined) {
-            E(`${at}.keys references blocks.${s.group}.${k}, which does not exist`);
-          }
-        }
-      }
-    }
-    if (s.kind === "mobility" && def.mobility === undefined) {
-      E(`${at} is a mobility section but the definition has no mobility list`);
-    }
-    if (s.kind === "nutrition" && def.nutritionTargets === undefined) {
-      E(`${at} is a nutrition section but the definition has no nutritionTargets`);
-    }
-    if (s.kind === "table") {
-      if (!Array.isArray(s.rows) || !s.rows.length) E(`${at}.rows must be a non-empty array`);
-      else s.rows.forEach((r, j) => {
-        if (!Array.isArray(r) || !r.every((c) => typeof c === "string")) {
-          E(`${at}.rows[${j}] must be an array of strings`);
-        }
-      });
-    }
+    card.body.forEach((part, j) => validatePart(def, part, `${at}.body[${j}]`, E, W));
   });
+}
+
+/** Keys any part may carry, on top of the ones its own type defines. */
+const COMMON_PART_KEYS = ["type", "color", "muted"];
+
+function validatePart(def, part, at, E, W) {
+  if (!isObj(part)) { E(`${at} is not an object`); return; }
+  if (!PROGRAM_VIEW_PART_TYPES.includes(part.type)) {
+    E(`${at}.type must be one of ${PROGRAM_VIEW_PART_TYPES.join(", ")} (got ${JSON.stringify(part.type)})`);
+    return;
+  }
+
+  // A part may override its card's colour — Ville's yoga list sits in a
+  // mobility-coloured card but is drawn in the yoga colour. Same token rule as
+  // the card, for the same reason: a hex would not follow a theme change.
+  if (part.color !== undefined && (!isStr(part.color) || !COLOR_TOKEN.test(part.color))) {
+    E(`${at}.color must be "accent", "accent2" or "cat:<name>" (got ${JSON.stringify(part.color)})`);
+  }
+  if (part.muted !== undefined && typeof part.muted !== "boolean") {
+    E(`${at}.muted must be a boolean`);
+  }
+
+  // An unrecognised key is almost always a typo that would render as nothing at
+  // all, so it is worth saying out loud rather than ignoring.
+  const allowed = COMMON_PART_KEYS.concat(PART_KEYS[part.type] || []);
+  for (const k of Object.keys(part)) {
+    if (!allowed.includes(k)) W(`${at} carries unrecognised key "${k}" — it will not render`);
+  }
+
+  if (part.type === "heading") {
+    if (!isStr(part.text)) E(`${at}.text must be a non-empty string`);
+  }
+
+  if (part.type === "paragraph") {
+    if (!isStr(part.text)) E(`${at}.text must be a non-empty string`);
+    if (part.strong !== undefined && !isStr(part.strong)) E(`${at}.strong must be a non-empty string when present`);
+  }
+
+  if (part.type === "lines") {
+    if (!Array.isArray(part.items) || !part.items.length) E(`${at}.items must be a non-empty array`);
+    else part.items.forEach((t, k) => { if (!isStr(t)) E(`${at}.items[${k}] must be a non-empty string`); });
+  }
+
+  if (part.type === "exercises") {
+    if (!isStr(part.group)) { E(`${at}.group must name a block group`); return; }
+    const grp = isObj(def.blocks) ? def.blocks[part.group] : null;
+    if (!isObj(grp)) { E(`${at}.group "${part.group}" does not exist in blocks`); return; }
+    if (part.keys !== undefined) {
+      if (!Array.isArray(part.keys) || !part.keys.length) { E(`${at}.keys must be a non-empty array when present`); return; }
+      // THE check this whole section exists for. The compiled ProgramView
+      // hardcodes ["a","b","c"] and throws if a key is renamed or dropped;
+      // here a stale reference is a validation error, caught before it ships.
+      part.keys.forEach((k) => {
+        if (grp[k] === undefined) E(`${at}.keys references blocks.${part.group}.${k}, which does not exist`);
+      });
+    }
+    if (part.excludeTyped !== undefined && typeof part.excludeTyped !== "boolean") {
+      E(`${at}.excludeTyped must be a boolean`);
+    }
+    if (part.groupByBlock !== undefined && typeof part.groupByBlock !== "boolean") {
+      E(`${at}.groupByBlock must be a boolean`);
+    }
+    if (part.label !== undefined && !isStr(part.label)) E(`${at}.label must be a non-empty string when present`);
+  }
+
+  if (part.type === "mobility" && def.mobility === undefined) {
+    E(`${at} is a mobility part but the definition has no mobility list`);
+  }
+
+  if (part.type === "nutrition" && def.nutritionTargets === undefined) {
+    E(`${at} is a nutrition part but the definition has no nutritionTargets`);
+  }
+
+  if (part.type === "week") {
+    if (part.week !== undefined && !["A", "B"].includes(part.week)) {
+      E(`${at}.week must be "A" or "B" when present`);
+    }
+  }
+
+  if (part.type === "table") {
+    if (part.columns !== undefined) {
+      if (!Array.isArray(part.columns) || !part.columns.length) E(`${at}.columns must be a non-empty array when present`);
+      else part.columns.forEach((c, k) => { if (!isStr(c)) E(`${at}.columns[${k}] must be a non-empty string`); });
+    }
+    if (!Array.isArray(part.rows) || !part.rows.length) { E(`${at}.rows must be a non-empty array`); return; }
+    part.rows.forEach((r, k) => {
+      if (!Array.isArray(r) || !r.length) { E(`${at}.rows[${k}] must be a non-empty array`); return; }
+      if (!r.every((c) => typeof c === "string")) E(`${at}.rows[${k}] must contain only strings`);
+      if (part.columns && r.length !== part.columns.length) {
+        E(`${at}.rows[${k}] has ${r.length} cells but there are ${part.columns.length} columns`);
+      }
+    });
+  }
 }
 
 /* --------------------------- non-data value scan --------------------------- */

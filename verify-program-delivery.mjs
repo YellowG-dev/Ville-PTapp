@@ -5,11 +5,17 @@
  * Exits 1 on any failure, and on a missing file, so it can gate a deploy.
  *
  * It checks two different things, because each catches a different mistake:
- *   STRUCTURE  — app.jsx no longer reads slot metadata off the compiled file.
- *                A reintroduced direct read is the regression that brings back
- *                the silent divergence between a delivered and a compiled block.
+ *   STRUCTURE  — app.jsx no longer reads slot metadata off the compiled file,
+ *                the generated Program view is wired in as the preferred
+ *                renderer, and the hand-written fallback view guards every
+ *                block read. A reintroduced direct read is the regression that
+ *                brings back the silent divergence between a delivered and a
+ *                compiled block, or a white screen on the Program tab.
  *   BEHAVIOUR  — the real engine resolves a delivered programme that introduces
  *                a slot this bundle never compiled, without throwing.
+ *
+ * The render behaviour of the generated view is covered separately, by
+ * test-program-view.mjs. Run both.
  */
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 
@@ -26,6 +32,8 @@ const need = (path) => {
 const appSrc     = need("src/app.jsx");
 const schemaSrc  = need("src/core/program-schema.js");
 const programsSrc = need("src/core/programs.js");
+const viewSrc    = need("src/core/program-view.jsx");
+const configSrc  = need("src/config.jsx");
 
 /* ------------------------------- STRUCTURE -------------------------------- */
 console.log("\nSTRUCTURE — app.jsx reads metadata off PROGRAM, not the compiled file");
@@ -90,6 +98,55 @@ for (const sym of ["activeProgramAtStartup", "refreshPrograms", "cachedRows",
 // config.jsx, which node cannot parse, and would make this check impossible.
 ok("programs.js keeps supabase.js out of its top-level imports",
    !/^import[^;]*["']\.\/supabase\.js["']/m.test(programsSrc));
+
+console.log("\nSTRUCTURE — the Program tab renders from the definition");
+
+// The generated renderer. It is byte-identical in all four client repos, like
+// app.jsx, so nothing here may name a client.
+ok("program-view.jsx exports GeneratedProgramView",
+   /export function GeneratedProgramView\b/.test(viewSrc));
+for (const fn of ["blocksFor", "slotMetaFor", "slotOptionsFor", "mobilityFor"]) {
+  ok(`program-view.jsx imports ${fn}`,
+     new RegExp(`\\b${fn}\\b[\\s\\S]{0,200}?from\\s+"\\./program-schema\\.js"`).test(viewSrc));
+}
+// A hex here would survive a theme change and clash with it, so colour must
+// arrive as a token and be resolved against the live theme.
+{
+  const hex = viewSrc.match(/#[0-9a-fA-F]{6}/);
+  ok("program-view.jsx carries no hex colour literal", hex === null, hex && hex[0]);
+}
+
+ok("app.jsx imports GeneratedProgramView",
+   /import\s*\{[^}]*\bGeneratedProgramView\b[^}]*\}\s*from\s+"\.\/core\/program-view\.jsx"/.test(code));
+// The compiled view is the fallback for a programme with no programView, which
+// is every programme until one is delivered. It must stay imported and wired.
+ok("app.jsx still imports the compiled ProgramView from config.jsx",
+   /import\s*\{[\s\S]*?\bProgramView\b[\s\S]*?\}\s*from\s+"\.\/config\.jsx"/.test(code));
+ok("app.jsx still renders the compiled ProgramView as the fallback",
+   /<ProgramView\s/.test(code));
+ok("app.jsx gates on PROGRAM.programView",
+   /PROGRAM\.programView/.test(code));
+
+console.log("\nSTRUCTURE — the compiled fallback view guards every block read");
+
+// Strip comments here too: the guidance above these reads mentions them.
+const configCode = configSrc
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+// BLOCKS.strength[k] and BLOCKS.run.easy.exercises are the two shapes that
+// white-screened the Program tab when a delivered programme renamed a block.
+// Both must go through optional chaining, so neither form may appear at all.
+{
+  const bracket = configCode.match(/BLOCKS\.\w+\s*\[/);
+  ok("config.jsx has no unguarded BLOCKS.<group>[...] read", bracket === null, bracket && bracket[0]);
+  const chain = configCode.match(/BLOCKS\.\w+\.\w+\./);
+  ok("config.jsx has no unguarded BLOCKS.<group>.<key>.<field> read", chain === null, chain && chain[0]);
+  const meta = configCode.match(/SLOT_META\[\w+\]\./);
+  ok("config.jsx has no unguarded SLOT_META[slot] read", meta === null, meta && meta[0]);
+  const opts = configCode.match(/[^(|]\bSLOT_OPTIONS\[\w+\]\s*\./);
+  ok("config.jsx reads SLOT_OPTIONS[slot] only through a fallback", opts === null, opts && opts[0].trim());
+}
 
 /* ------------------------------- BEHAVIOUR -------------------------------- */
 console.log("\nBEHAVIOUR — against the live engine");

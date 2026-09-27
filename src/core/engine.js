@@ -8,6 +8,13 @@ import { getISOWeek, dateKey, daysBetween } from "./dates.js";
  * program, get a different app — same scheduling, same history maths, same
  * override system.
  *
+ * The four date-bearing functions — resolveSchedule, resolveTesting,
+ * buildSections and buildHistoryRows — also accept a RESOLVER in that
+ * position: a function (date) -> program. That is how a past day is scored
+ * against the programme version that was in force when it was logged, rather
+ * than against whatever is running today. An object argument behaves exactly
+ * as it always has, so every existing caller is untouched.
+ *
  * v2 additions, all opt-in via program data so existing programs behave
  * exactly as before:
  *   - skip days        overrides[day].skip = "sick" | "travel" | "injured"
@@ -46,7 +53,11 @@ export function skipLabel(reason) {
  * erase what was there: `scheduled` still reports it, so unsetting the skip
  * restores the day exactly.
  */
-export function resolveSchedule(date, weekOverride, overrides, program) {
+export function resolveSchedule(date, weekOverride, overrides, programOrFn) {
+  // `programOrFn` may be a resolver: (date) -> program. A day must be scored
+  // against the programme in force on THAT date, not the one running today.
+  // Passing a plain object behaves exactly as before.
+  const program = typeof programOrFn === "function" ? programOrFn(date) : programOrFn;
   const auto = getISOWeek(date) % 2 === 0 ? "A" : "B";
   const weekType = weekOverride === "auto" ? auto : weekOverride;
   const key = dateKey(date);
@@ -163,7 +174,9 @@ function toDate(value) {
  * A test moves off its calculated day the same way a session does:
  * overrides[day]["test:<id>"] = true | false.
  */
-export function resolveTesting(date, overrides, program) {
+export function resolveTesting(date, overrides, programOrFn) {
+  // Accepts a resolver, like resolveSchedule — see the note there.
+  const program = typeof programOrFn === "function" ? programOrFn(date) : programOrFn;
   const spec = program && program.testing;
   if (!spec || !Array.isArray(spec.items)) return [];
   const ov = (overrides && overrides[dateKey(date)]) || {};
@@ -237,7 +250,11 @@ function mapTask(e, opt) {
  * Daily sections survive a skip: mobility, checks and nutrition still apply
  * when you are ill. Only training is removed.
  */
-export function buildSections(date, opts, program) {
+export function buildSections(date, opts, programOrFn) {
+  // Accepts a resolver, like resolveSchedule — see the note there. Resolved
+  // once here, so the resolveSchedule and resolveTesting calls below are
+  // handed the same programme object this day was built from.
+  const program = typeof programOrFn === "function" ? programOrFn(date) : programOrFn;
   const o = opts || {};
   const gentler = Boolean(o.gentler);
   const overrides = o.overrides || {};
@@ -392,6 +409,10 @@ export function countableTasks(sections) {
  * percentages stay correct even after the program changes.
  */
 export function buildHistoryRows(log, overrides, program) {
+  // `program` may be a resolver: (date) -> program. Every day is then scored
+  // against the version in force on that day, which is the whole point —
+  // a day logged under Block 1 must not be re-scored against Block 2.
+  const programFor = typeof program === "function" ? program : () => program;
   return Object.keys(log)
     .sort()
     .map((dstr) => {
@@ -401,11 +422,12 @@ export function buildHistoryRows(log, overrides, program) {
       const weekType = rec.weekType || (getISOWeek(dateObj) % 2 === 0 ? "A" : "B");
       const gentler = Boolean(rec.gentler);
       const hrMax = rec.hrMax != null ? rec.hrMax : null;
+      const p = programFor(dateObj);
 
       const sections = buildSections(
         dateObj,
         { weekType: weekType, gentler: gentler, overrides: overrides, hrMax: hrMax, record: rec },
-        program
+        p
       );
 
       const byCat = {};
@@ -425,7 +447,7 @@ export function buildHistoryRows(log, overrides, program) {
         }
       }
 
-      const info = resolveSchedule(dateObj, weekType, overrides, program);
+      const info = resolveSchedule(dateObj, weekType, overrides, p);
 
       return {
         date: dstr,

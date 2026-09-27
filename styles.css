@@ -649,6 +649,9 @@
   .uppercase {
     text-transform: uppercase;
   }
+  .italic {
+    font-style: italic;
+  }
   .line-through {
     text-decoration-line: line-through;
   }
@@ -705,6 +708,9 @@
   .select-none {
     -webkit-user-select: none;
     user-select: none;
+  }
+  .block-1 {
+    block-size: var(--spacing);
   }
   .block-2 {
     block-size: calc(var(--spacing) * 2);

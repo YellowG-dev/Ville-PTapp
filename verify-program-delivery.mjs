@@ -52,12 +52,15 @@ ok("imports the defended accessors",
 for (const fn of ["blocksFor", "slotMetaFor", "slotOptionsFor"]) {
   ok(`uses ${fn}`, new RegExp(`\\b${fn}\\s*\\(`).test(code));
 }
+// The identifier is deliberately loose: since Phase 7 the day detail renders the
+// programme in force on the SELECTED day (selProgram), not the one running
+// today. What must never come back is a read that bypasses the accessors.
 ok("day detail derives meta via slotMetaFor",
-   /const meta = slotMetaFor\(PROGRAM, slotName\)/.test(code));
+   /const meta = slotMetaFor\(\w+, slotName\)/.test(code));
 ok("day detail derives block via blocksFor",
-   /blocksFor\(PROGRAM, slotName\)\[value\]/.test(code));
+   /blocksFor\(\w+, slotName\)\[value\]/.test(code));
 ok("the Change picker cannot throw on an unknown slot",
-   /slotOptionsFor\(PROGRAM, slotName\)\.map/.test(code));
+   /slotOptionsFor\(\w+, slotName\)\.map/.test(code));
 
 console.log("\nSTRUCTURE — program-schema.js exposes the contract");
 for (const sym of ["SCHEMA_VERSION", "validate", "resolveForDate",
@@ -91,6 +94,7 @@ ok("a delivered definition is validated before use",
 ok("the cache is stamped with its owner",
    /cached\.userId !== userId/.test(programsSrc));
 for (const sym of ["activeProgramAtStartup", "refreshPrograms", "cachedRows",
+                   "makeProgramResolver",
                    "pickActive", "selectRows", "readCache", "writeCache", "clearCache"]) {
   ok(`programs.js exports ${sym}`, new RegExp(`export (async )?function\\s+${sym}\\b`).test(programsSrc));
 }
@@ -149,6 +153,68 @@ const configCode = configSrc
 }
 
 /* ------------------------------- BEHAVIOUR -------------------------------- */
+console.log("\nSTRUCTURE — Phase 7: every date-bearing call resolves per date");
+
+const engineSrc = need("src/core/engine.js");
+
+// The regression this guards: one `program` for the whole of history, so a day
+// logged under Block 1 is re-scored against Block 2 the moment Block 2 starts.
+ok("app.jsx builds the resolver",
+   /const programForDate = makeProgramResolver\(/.test(code));
+ok("the resolver is built from the cache and the compiled fallback",
+   /makeProgramResolver\(\{[\s\S]{0,200}?compiled: COMPILED_PROGRAM[\s\S]{0,200}?prefix: STORAGE_PREFIX/.test(code));
+ok("history is scored per date, not against today's programme",
+   /buildHistoryRows\(log, overrides, programForDate\)/.test(code));
+ok("app.jsx no longer scores all of history against one programme",
+   !/buildHistoryRows\(log, overrides, PROGRAM\)/.test(code));
+ok("Today's sections resolve per date",
+   /buildSections\([\s\S]{0,240}?programForDate\s*\n?\s*\)/.test(code));
+ok("the Calendar receives the resolver rather than reaching for a module global",
+   /setSkip, setWeekDeload, programForDate \}\}/.test(code));
+ok("the Calendar resolves the selected day",
+   /const selProgram = p\.programForDate\(p\.calSelected\)/.test(code));
+ok("the month grid resolves every cell",
+   /const dp = p\.programForDate\(d\)/.test(code));
+{
+  // Nothing date-bearing may still be handed PROGRAM. Counted rather than
+  // matched one by one, so a new call site cannot slip past.
+  const stale = code.match(/(resolveSchedule|resolveTesting|buildSections|buildHistoryRows)\([^;]{0,200}?\bPROGRAM\b/g) || [];
+  ok("no date-bearing engine call still takes PROGRAM", stale.length === 0, stale.join(" | "));
+}
+ok("the deload wave is judged by the week's own programme",
+   /suggestDeloadWeek\(weekMonday, p\.programForDate\(weekMonday\)\)/.test(code));
+
+// And the engine side: all four must accept a resolver, or app.jsx is passing
+// a function to something that would read `.slots` off it and render nothing.
+for (const fn of ["resolveSchedule", "resolveTesting", "buildSections"]) {
+  ok(`engine.js ${fn} normalises a function argument`,
+     new RegExp(`function ${fn}\\([^)]*programOrFn\\)[\\s\\S]{0,400}?typeof programOrFn === "function"`).test(engineSrc));
+}
+ok("engine.js buildHistoryRows normalises a function argument",
+   /function buildHistoryRows\([\s\S]{0,300}?typeof program === "function" \? program : \(\) => program/.test(engineSrc));
+ok("buildHistoryRows resolves the programme per day",
+   /const p = programFor\(dateObj\)/.test(engineSrc));
+
+console.log("\nSTRUCTURE — Phase 8: the client is told a new programme is waiting");
+
+ok("programs.js selects the row's name",
+   /\.select\(\s*["'][^"']*\bname\b[^"']*["']\s*\)/.test(programsSrc));
+ok("pickActive carries the name",
+   /name: row\.name \|\| null/.test(programsSrc));
+ok("refreshPrograms reports the name",
+   /name: picked\.name/.test(programsSrc));
+ok("app.jsx records which programme is waiting",
+   /\{ rowId: r\.rowId, name: r\.name \|\| null \}/.test(code));
+ok("the Today banner reads programUpdate",
+   /programUpdate && !programNoticeHidden/.test(code));
+ok("the banner names the waiting programme",
+   /programUpdate\.name \|\| programUpdate\.rowId/.test(code));
+ok("the banner offers a reload rather than swapping the programme",
+   /window\.location\.reload\(\)/.test(code));
+ok("dismissal is session-only, not persisted",
+   /const \[programNoticeHidden, setProgramNoticeHidden\] = useState\(false\)/.test(code)
+   && !/saveJSON\("programNotice/.test(code));
+
 console.log("\nBEHAVIOUR — against the live engine");
 
 const { validate, SCHEMA_VERSION, slotMetaFor, slotOptionsFor, blocksFor, resolveForDate }
@@ -255,6 +321,30 @@ console.log("\nBEHAVIOUR — version in force on a date");
   ok("mid-block-1 scores against b1", resolveForDate(rows, "2026-10-20").id === "b1");
   ok("block-2 start scores against b2", resolveForDate(rows, "2026-11-16").id === "b2");
   ok("a day before any version has none", resolveForDate(rows, "2026-09-01") === null);
+}
+
+console.log("\nBEHAVIOUR — a resolver against the live engine");
+{
+  const { buildHistoryRows, resolveTesting } = await import("./src/core/engine.js");
+  const day = new Date(2026, 9, 14);           // a Wednesday, mid-programme
+  const asFn = () => PROGRAM;
+
+  ok("resolveSchedule: a resolver equals the object",
+     JSON.stringify(resolveSchedule(day, "auto", {}, asFn))
+     === JSON.stringify(resolveSchedule(day, "auto", {}, PROGRAM)));
+  ok("buildSections: a resolver equals the object",
+     JSON.stringify(buildSections(day, { weekType: "auto", overrides: {} }, asFn))
+     === JSON.stringify(buildSections(day, { weekType: "auto", overrides: {} }, PROGRAM)));
+  ok("resolveTesting: a resolver equals the object",
+     JSON.stringify(resolveTesting(day, {}, asFn)) === JSON.stringify(resolveTesting(day, {}, PROGRAM)));
+
+  const log = {};
+  for (let i = 0; i < 10; i++) {
+    const d = new Date(2026, 9, 5 + i);
+    log[`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`] = {};
+  }
+  ok("buildHistoryRows: a resolver equals the object",
+     JSON.stringify(buildHistoryRows(log, {}, asFn)) === JSON.stringify(buildHistoryRows(log, {}, PROGRAM)));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

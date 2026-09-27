@@ -23,7 +23,7 @@ import {
 // as the fallback for a programme that does not.
 import { GeneratedProgramView } from "./core/program-view.jsx";
 import {
-  activeProgramAtStartup, refreshPrograms, cachedRows,
+  activeProgramAtStartup, refreshPrograms, cachedRows, makeProgramResolver,
 } from "./core/programs.js";
 
 import {
@@ -82,6 +82,22 @@ const PROGRAM_SOURCE = activeProgramAtStartup(COMPILED_PROGRAM, STORAGE_PREFIX, 
   clientName: CLIENT_NAME,
 });
 const PROGRAM = PROGRAM_SOURCE.program;
+
+// The programme in force on any GIVEN date, not just today. PROGRAM above stays
+// what the app IS running; this is what a particular day should be judged by.
+//
+// Without it, a day logged under Block 1 was re-scored against Block 2 the
+// moment Block 2 started, and the Calendar painted every past day with the
+// current programme's sessions. Everything below that renders or scores a
+// specific date takes this; everything that describes the app as it is now —
+// the Program tab, the chart config, the legend — keeps taking PROGRAM.
+//
+// Built from the same cache, once, synchronously, for the same reason: offline,
+// signed out, before any fetch could return. No userId: it is only known
+// asynchronously, and the fetch already filters by it.
+const programForDate = makeProgramResolver({
+  compiled: COMPILED_PROGRAM, prefix: STORAGE_PREFIX, clientName: CLIENT_NAME,
+});
 
 // ==time-input:start
 // Number entry. Plain numbers behave exactly as before (comma or dot decimal).
@@ -201,6 +217,10 @@ function AppInner({ setThemeId }) {
   // applied now — see the PROGRAM_SOURCE comment — so this is what tells the
   // client something is waiting. Phase 8 turns it into a proper notice.
   const [programUpdate, setProgramUpdate] = useState(null);
+  // Dismissing the notice hides it for THIS session only — deliberately not
+  // persisted. A programme that is still waiting must say so again on the next
+  // open; this is not a "seen once" flag.
+  const [programNoticeHidden, setProgramNoticeHidden] = useState(false);
   const [emailDraft, setEmailDraft] = useState("");
   const [codeDraft, setCodeDraft] = useState("");
   const [codeSent, setCodeSent] = useState(false);
@@ -348,7 +368,9 @@ function AppInner({ setThemeId }) {
         clientName: CLIENT_NAME,
         activeRowId: PROGRAM_SOURCE.rowId,
       });
-      setProgramUpdate(r && r.ok && r.changed ? { rowId: r.rowId } : null);
+      setProgramUpdate(
+        r && r.ok && r.changed ? { rowId: r.rowId, name: r.name || null } : null
+      );
     };
 
     let stopAuth = () => {};
@@ -568,8 +590,8 @@ function AppInner({ setThemeId }) {
 
   const swapBlock = useCallback((a, b, slot) => {
     const ka = dateKey(a), kb = dateKey(b);
-    const ia = resolveSchedule(a, "auto", overrides, PROGRAM).slots[slot];
-    const ib = resolveSchedule(b, "auto", overrides, PROGRAM).slots[slot];
+    const ia = resolveSchedule(a, "auto", overrides, programForDate).slots[slot];
+    const ib = resolveSchedule(b, "auto", overrides, programForDate).slots[slot];
     writeOverrides((prev) => ({
       ...prev,
       [ka]: { ...(prev[ka] || {}), [slot]: ib },
@@ -652,12 +674,12 @@ function AppInner({ setThemeId }) {
     () => buildSections(
       viewedDate,
       { weekType: "auto", gentler, overrides, hrMax: settings.hrMax, record: rec },
-      PROGRAM
+      programForDate
     ),
     [viewedDate, gentler, overrides, settings.hrMax, rec]
   );
   const info = useMemo(
-    () => resolveSchedule(viewedDate, "auto", overrides, PROGRAM),
+    () => resolveSchedule(viewedDate, "auto", overrides, programForDate),
     [viewedDate, overrides]
   );
 
@@ -675,10 +697,11 @@ function AppInner({ setThemeId }) {
     for (let i = 1; i <= 42; i++) {
       const d = new Date(viewedDate);
       d.setDate(d.getDate() + i);
-      const s = resolveSchedule(d, "auto", overrides, PROGRAM);
-      for (const slot of PROGRAM.slots) {
+      const pd = programForDate(d);
+      const s = resolveSchedule(d, "auto", overrides, pd);
+      for (const slot of pd.slots) {
         const v = s.slots[slot];
-        const block = v && PROGRAM.blocks[slot] && PROGRAM.blocks[slot][v];
+        const block = v && blocksFor(pd, slot)[v];
         if (block && (block.cat || slot) === "strength") return { date: d, label: block.label };
       }
     }
@@ -687,7 +710,7 @@ function AppInner({ setThemeId }) {
   const doneCount = countable.filter((t) => isTaskDone(t, rec)).length;
   const pct = countable.length ? doneCount / countable.length : 0;
 
-  const historyRows = useMemo(() => buildHistoryRows(log, overrides, PROGRAM), [log, overrides]);
+  const historyRows = useMemo(() => buildHistoryRows(log, overrides, programForDate), [log, overrides]);
   const trendRows = useMemo(() => historyRows.filter((r) => r.date !== todayKey), [historyRows, todayKey]);
   const streak = useMemo(() => computeStreak(historyRows), [historyRows]);
   const heatmap = useMemo(() => buildHeatmapCells(historyRows, 12), [historyRows]);
@@ -1183,13 +1206,36 @@ function AppInner({ setThemeId }) {
             <p style={{ color: TEXT_MUTED }} className="text-[10px]">
               v{APP_VERSION} · programme {PROGRAM_SOURCE.source}
               {PROGRAM_SOURCE.rowId ? ` (${PROGRAM_SOURCE.rowId})` : ""}
-              {programUpdate ? " · update ready, reopen the app" : ""}
+              {programUpdate
+                ? ` · update ready: ${programUpdate.name || programUpdate.rowId} — reopen the app`
+                : ""}
             </p>
           </div>
         )}
 
         {view === "today" && (
           <>
+            {/* A new programme is waiting. It is NOT applied here: a client
+                standing in the gym must not have the session swapped as they
+                read it. The notice says what is ready and offers the reload;
+                the client decides when. Dismissal lasts this session only. */}
+            {programUpdate && !programNoticeHidden && (
+              <div style={{ background: TINT.soft, borderColor: ACCENT }}
+                   className="flex items-center justify-between gap-2 rounded-xl border px-3 py-2 mb-3 mt-3">
+                <p className="text-xs">
+                  <span className="font-semibold">New programme ready</span>
+                  {" — "}
+                  <span className="italic">{programUpdate.name || programUpdate.rowId}</span>.
+                  {" "}Reopen the app to start it.
+                </p>
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <button onClick={() => window.location.reload()} style={{ color: ACCENT }}
+                          className="text-xs font-semibold">Reopen now</button>
+                  <button onClick={() => setProgramNoticeHidden(true)} aria-label="Dismiss"
+                          style={{ color: TEXT_MUTED }} className="text-xs font-semibold">Later</button>
+                </div>
+              </div>
+            )}
             {/* Sick / travel / injured. One tap clears the day's training
                 everywhere; tapping the active reason again restores it. */}
             <div className="flex items-center gap-1.5 mt-3 flex-wrap">
@@ -1804,7 +1850,7 @@ function AppInner({ setThemeId }) {
           {...{ calYear, calMonth, setCalYear, setCalMonth, calSelected, setCalSelected, overrides,
                 todayKey, today, moveSource, setMoveSource, swapBlock, setBlock, resetBlock,
                 editingBlock, setEditingBlock, activityDraft, setActivityDraft, addActivity, removeActivity,
-                setSkip, setWeekDeload }}
+                setSkip, setWeekDeload, programForDate }}
         />
       )}
 
@@ -2029,8 +2075,11 @@ function CalendarView(p) {
           HEAT_RGB, FONT_DISPLAY, FONT_BODY, FONT_MONO, FONT_IMPORT, CATS, OK_COLOR,
           ON_ACCENT, KNOB, TINT, BADGE } = useTheme();
   const weeks = useMemo(() => getMonthMatrix(p.calYear, p.calMonth), [p.calYear, p.calMonth]);
-  const selInfo = useMemo(() => resolveSchedule(p.calSelected, "auto", p.overrides, PROGRAM), [p.calSelected, p.overrides]);
-  const block = selInfo.slots.strength ? blocksFor(PROGRAM, "strength")[selInfo.slots.strength] || null : null;
+  // The selected day resolves to the programme in force on that day. Memoised
+  // inside the resolver, so calling it per render costs nothing.
+  const selProgram = p.programForDate(p.calSelected);
+  const selInfo = useMemo(() => resolveSchedule(p.calSelected, "auto", p.overrides, p.programForDate), [p.calSelected, p.overrides]);
+  const block = selInfo.slots.strength ? blocksFor(selProgram, "strength")[selInfo.slots.strength] || null : null;
   const monthLabel = new Date(p.calYear, p.calMonth, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
 
   const go = (delta) => {
@@ -2086,8 +2135,8 @@ function CalendarView(p) {
           // one on. Deloading answers how the last three weeks actually felt,
           // which a calendar cannot know.
           const weekMonday = week[0];
-          const deloadOn = resolveSchedule(weekMonday, "auto", p.overrides, PROGRAM).deload === true;
-          const suggested = suggestDeloadWeek(weekMonday, PROGRAM);
+          const deloadOn = resolveSchedule(weekMonday, "auto", p.overrides, p.programForDate).deload === true;
+          const suggested = suggestDeloadWeek(weekMonday, p.programForDate(weekMonday));
           return (
             <div key={wi} className="flex items-stretch gap-1.5">
               {PROGRAM.showDeloadToggle && (
@@ -2110,7 +2159,8 @@ function CalendarView(p) {
                   const inMonth = d.getMonth() === p.calMonth;
                   const isToday = dateKey(d) === p.todayKey;
                   const isSel = dateKey(d) === dateKey(p.calSelected);
-                  const i = resolveSchedule(d, "auto", p.overrides, PROGRAM);
+                  const i = resolveSchedule(d, "auto", p.overrides, p.programForDate);
+                  const dp = p.programForDate(d);
                   return (
                     <button key={dateKey(d)} onClick={() => pick(d)}
                             style={{ background: isSel ? TINT.selected : i.deload === true ? ACCENT + "14" : CARD,
@@ -2124,11 +2174,11 @@ function CalendarView(p) {
                         {i.skip
                           ? <Ban size={9} style={{ color: CATS.check.color }} />
                           : <>
-                              {PROGRAM.slots.map((sl) => i.slots[sl] && (
-                                <span key={sl} style={{ background: slotMetaFor(PROGRAM, sl).color }} className="w-1.5 h-1.5 rounded-full" />
+                              {dp.slots.map((sl) => i.slots[sl] && (
+                                <span key={sl} style={{ background: slotMetaFor(dp, sl).color }} className="w-1.5 h-1.5 rounded-full" />
                               ))}
                               {i.activities.length > 0 && <span style={{ background: CATS.activity.color }} className="w-1.5 h-1.5 rounded-full" />}
-                              {resolveTesting(d, p.overrides, PROGRAM).some((t) => t.due) && (
+                              {resolveTesting(d, p.overrides, p.programForDate).some((t) => t.due) && (
                                 <span style={{ background: (CATS.testing || CATS.check).color }} className="w-1.5 h-1.5 rounded-full" />
                               )}
                             </>}
@@ -2187,10 +2237,10 @@ function CalendarView(p) {
           )}
         </div>
 
-        {PROGRAM.slots.map((slotName) => {
-          const meta = slotMetaFor(PROGRAM, slotName);
+        {selProgram.slots.map((slotName) => {
+          const meta = slotMetaFor(selProgram, slotName);
           const value = selInfo.slots[slotName];
-          const blk = value ? blocksFor(PROGRAM, slotName)[value] || null : null;
+          const blk = value ? blocksFor(selProgram, slotName)[value] || null : null;
           const SlotIcon = (CATS[meta.cat || slotName] && CATS[meta.cat || slotName].Icon) || meta.Icon || Dumbbell;
           const isEditing = p.editingBlock === slotName;
           const isMovingThis = p.moveSource && p.moveSource.slot === slotName;
@@ -2228,7 +2278,7 @@ function CalendarView(p) {
 
               {isEditing && (
                 <div className="flex gap-1.5 flex-wrap mt-2">
-                  {slotOptionsFor(PROGRAM, slotName).map((opt) => (
+                  {slotOptionsFor(selProgram, slotName).map((opt) => (
                     <button key={String(opt.value)}
                             onClick={() => { p.setBlock(p.calSelected, slotName, opt.value); p.setEditingBlock(null); }}
                             style={{ background: value === opt.value ? meta.color : "transparent",
@@ -2263,7 +2313,7 @@ function CalendarView(p) {
               <p style={{ fontFamily: FONT_DISPLAY }} className="text-xs font-semibold">Testing</p>
             </div>
             <div className="space-y-2">
-              {resolveTesting(p.calSelected, p.overrides, PROGRAM).map((t) => (
+              {resolveTesting(p.calSelected, p.overrides, p.programForDate).map((t) => (
                 <div key={t.id} className="flex items-center justify-between gap-2">
                   <p style={{ color: t.due ? TEXT_PRIMARY : TEXT_MUTED }} className="text-xs">
                     {t.label}{t.due ? " — due" : ""}

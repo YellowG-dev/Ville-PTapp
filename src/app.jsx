@@ -265,7 +265,10 @@ function AppInner({ setThemeId }) {
       return;
     }
     (async () => {
-      const first = await loadWearables();
+      // Named, always. The coach's session passes the RLS policy's coach branch,
+      // so an unfiltered read here hands him his clients' rows as if they were
+      // his own. See loadWearables.
+      const first = await loadWearables(authUser.id);
       if (dead || !first.ok) return;
       setWearables(first);
 
@@ -276,15 +279,15 @@ function AppInner({ setThemeId }) {
       if (!connected.length) return;
       await Promise.all(connected.map((c) => syncVendor(c.vendor, 14)));
       if (dead) return;
-      const after = await loadWearables();
+      const after = await loadWearables(authUser.id);
       if (!dead && after.ok) setWearables(after);
     })();
     return () => { dead = true; };
   }, [authUser]);
 
   const recovery = useMemo(
-    () => buildRecovery(wearables.days, wearables.workouts),
-    [wearables.days, wearables.workouts]
+    () => buildRecovery(wearables.days, wearables.workouts, authUser?.id || null),
+    [wearables.days, wearables.workouts, authUser]
   );
   const connByVendor = useMemo(() => {
     const out = {};
@@ -1105,7 +1108,7 @@ function AppInner({ setThemeId }) {
                                         setWearBusy(vendor);
                                         setWearMsg("Fetching…");
                                         const r = await syncVendor(vendor, 30);
-                                        const after = await loadWearables();
+                                        const after = await loadWearables(authUser?.id);
                                         if (after.ok) setWearables(after);
                                         setWearBusy(null);
                                         setWearMsg(r.ok ? "Up to date." : r.error || "Could not fetch.");

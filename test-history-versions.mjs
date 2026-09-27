@@ -24,7 +24,7 @@
  * four client repos, so the compiled programme is discovered the way
  * verify-program-delivery.mjs discovers it.
  */
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 
 let pass = 0, fail = 0;
@@ -352,6 +352,122 @@ ok("a slot absent from the version in force does not throw either", () => {
   const rows = buildHistoryRows(GHOST_LOG, GHOST_OV, () => noSlot);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].byCat[slot], undefined);
+});
+
+/* ----------------- swapping a slot across a version boundary ---------------- */
+// app.jsx's swapBlock reads `resolveSchedule(date, ...).slots[slot]` for BOTH
+// dates of a swap. `slots` is built by looping the resolved version's own
+// `slots` array, so once the two dates can fall under different versions, a slot
+// present on one side and absent on the other reads back as `undefined`.
+//
+// Writing `{slot: undefined}` into overrides is the trap: resolveSchedule uses
+// hasOwnProperty, so in memory the slot reads as CLEARED, but JSON.stringify
+// drops an undefined value, so after a reload the key is gone and the day falls
+// back to whatever the schedule says. The session would reappear under the
+// client on their next open. `?? null` makes both readings "cleared".
+
+console.log("\nOVERRIDES — swapping a slot the other version does not have");
+
+// A version 2 that RENAMES slot 0, carrying its blocks and schedule across.
+// Renaming rather than deleting, because a client can have a single slot
+// (Joonatan does) and validate() rightly rejects an empty `slots` array — so
+// "drops a slot" is not a shape every client can be tested against, while
+// "renames a slot" is. Either way the OLD name is absent from version 2, which
+// is what makes the read undefined.
+const RENAMED = `${slot}-v2`;
+const RENAMED_VERSION = (() => {
+  const p = forked("block-2-renamed", blockKeys[0]);
+  p.slots = p.slots.map((x) => (x === slot ? RENAMED : x));
+  p.blocks[RENAMED] = p.blocks[slot]; delete p.blocks[slot];
+  p.slotMeta[RENAMED] = p.slotMeta[slot]; delete p.slotMeta[slot];
+  p.slotOptions[RENAMED] = p.slotOptions[slot]; delete p.slotOptions[slot];
+  for (const wk of ["A", "B"]) {
+    for (const dow of Object.keys(p.schedule[wk])) {
+      const day = p.schedule[wk][dow];
+      if (slot in day) { day[RENAMED] = day[slot]; delete day[slot]; }
+    }
+  }
+  return p;
+})();
+
+ok("a version that renames a slot is still a valid definition", () => {
+  const v = validate(RENAMED_VERSION);
+  assert.ok(v.ok, v.errors.join("; "));
+});
+
+const dropResolver = makeProgramResolver({
+  compiled: PROGRAM, clientName: PROGRAM.clientName,
+  rows: [
+    { id: "has-slot", effective_from: "-infinity", name: "Has the slot", definition: OLD },
+    { id: "no-slot", effective_from: SWITCH_KEY, name: "Renamed the slot", definition: RENAMED_VERSION },
+  ],
+});
+
+ok("the old slot name reads as undefined under the version that renamed it", () => {
+  const before = resolveSchedule(addDays(SWITCH, -1), "auto", {}, dropResolver);
+  const after = resolveSchedule(addDays(SWITCH, 1), "auto", {}, dropResolver);
+  assert.ok(Object.prototype.hasOwnProperty.call(before.slots, slot), "slot missing from the old version");
+  assert.equal(after.slots[slot], undefined, "the old slot name still resolves — fixture is wrong");
+  assert.ok(Object.prototype.hasOwnProperty.call(after.slots, RENAMED), "the new slot name is missing");
+});
+
+/**
+ * swapBlock's logic, mirrored. `coerce` is how the read is normalised: the app
+ * uses `?? null`, and passing the identity function is what the app did before
+ * this was fixed, so the test can show the difference rather than assert it.
+ */
+function swapOverrides(a, b, slotName, coerce) {
+  const ka = key(a), kb = key(b);
+  const ia = coerce(resolveSchedule(a, "auto", {}, dropResolver).slots[slotName]);
+  const ib = coerce(resolveSchedule(b, "auto", {}, dropResolver).slots[slotName]);
+  return { [ka]: { [slotName]: ib }, [kb]: { [slotName]: ia } };
+}
+
+// Pick a day the DEFAULT schedule fills, so a dropped override key is visible:
+// the day falls back to a real scheduled session rather than to nothing.
+const SWAP_A = (() => {
+  for (let i = 1; i < 15; i++) {
+    const d = addDays(SWITCH, -i);
+    if (resolveSchedule(d, "auto", {}, dropResolver).slots[slot]) return d;
+  }
+  throw new Error("no scheduled day found before the switch");
+})();
+const SWAP_B = addDays(SWITCH, 1);        // under the version without the slot
+
+ok("the day chosen for the swap really does hold a scheduled session", () => {
+  assert.ok(resolveSchedule(SWAP_A, "auto", {}, dropResolver).slots[slot]);
+});
+
+ok("`?? null` survives the round trip through localStorage", () => {
+  const ov = swapOverrides(SWAP_A, SWAP_B, slot, (v) => v ?? null);
+  const reloaded = JSON.parse(JSON.stringify(ov));
+  for (const d of [SWAP_A, SWAP_B]) {
+    assert.deepStrictEqual(
+      resolveSchedule(d, "auto", ov, dropResolver).slots,
+      resolveSchedule(d, "auto", reloaded, dropResolver).slots,
+      `${key(d)} changed across a reload`,
+    );
+  }
+  // And the swap did what a swap should: SWAP_A gives its session up.
+  assert.equal(resolveSchedule(SWAP_A, "auto", ov, dropResolver).slots[slot], null);
+});
+
+ok("a bare read would NOT survive it — this is the bug being guarded", () => {
+  const ov = swapOverrides(SWAP_A, SWAP_B, slot, (v) => v);
+  const reloaded = JSON.parse(JSON.stringify(ov));
+  assert.equal(resolveSchedule(SWAP_A, "auto", ov, dropResolver).slots[slot], null,
+               "in memory the slot should read as cleared");
+  assert.notEqual(resolveSchedule(SWAP_A, "auto", reloaded, dropResolver).slots[slot], null,
+                  "after a reload it should come back — if this fails the trap is gone "
+                  + "and the ?? null test above no longer proves anything");
+});
+
+ok("app.jsx writes the coerced form at both swap sites", () => {
+  // Structural, because swapBlock itself is React code this script cannot call.
+  const src = readFileSync("src/app.jsx", "utf8");
+  const reads = src.match(/resolveSchedule\([ab], "auto", overrides, programForDate\)\.slots\[slot\][^;]*/g) || [];
+  assert.equal(reads.length, 2, `expected 2 swapBlock reads, found ${reads.length}`);
+  for (const r of reads) assert.match(r, /\?\?\s*null/, `a swapBlock read is not coerced: ${r}`);
 });
 
 /* ------------------------- validation runs exactly once -------------------- */

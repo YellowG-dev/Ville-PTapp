@@ -590,8 +590,15 @@ function AppInner({ setThemeId }) {
 
   const swapBlock = useCallback((a, b, slot) => {
     const ka = dateKey(a), kb = dateKey(b);
-    const ia = resolveSchedule(a, "auto", overrides, programForDate).slots[slot];
-    const ib = resolveSchedule(b, "auto", overrides, programForDate).slots[slot];
+    // `?? null`, not a bare read. These are the only two places that index one
+    // date's resolved slots with a slot name that came from ANOTHER date, so the
+    // two versions can disagree about whether the slot exists at all and the
+    // read can be undefined. Writing `{slot: undefined}` into overrides means
+    // "cleared" in memory (hasOwnProperty is true) and "not set" after a reload
+    // (JSON.stringify drops the key), so the day would silently change under the
+    // client on their next open. null means cleared, both times.
+    const ia = resolveSchedule(a, "auto", overrides, programForDate).slots[slot] ?? null;
+    const ib = resolveSchedule(b, "auto", overrides, programForDate).slots[slot] ?? null;
     writeOverrides((prev) => ({
       ...prev,
       [ka]: { ...(prev[ka] || {}), [slot]: ib },

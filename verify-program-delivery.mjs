@@ -181,6 +181,18 @@ ok("the month grid resolves every cell",
   const stale = code.match(/(resolveSchedule|resolveTesting|buildSections|buildHistoryRows)\([^;]{0,200}?\bPROGRAM\b/g) || [];
   ok("no date-bearing engine call still takes PROGRAM", stale.length === 0, stale.join(" | "));
 }
+{
+  // swapBlock indexes one date's resolved slots with a slot name that came from
+  // ANOTHER date, so the read can be undefined once the two dates fall under
+  // versions with different slot sets. `{slot: undefined}` reads as cleared in
+  // memory and as unset after a reload, so the day would change under the client
+  // on their next open. Both reads must be coerced.
+  const swapReads = code.match(/resolveSchedule\([ab], "auto", overrides, programForDate\)\.slots\[slot\][^;]*/g) || [];
+  ok("swapBlock reads both dates through the resolver", swapReads.length === 2, `found ${swapReads.length}`);
+  ok("neither swapBlock read can write undefined into an override",
+     swapReads.length === 2 && swapReads.every((r) => /\?\?\s*null/.test(r)),
+     swapReads.join(" | "));
+}
 ok("the deload wave is judged by the week's own programme",
    /suggestDeloadWeek\(weekMonday, p\.programForDate\(weekMonday\)\)/.test(code));
 

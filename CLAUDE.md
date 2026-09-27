@@ -61,7 +61,7 @@ From a repo root. In a fresh clone (which is every cloud session) install first:
 
 ```
 npm install                          # node_modules is not committed
-node verify-program-delivery.mjs     # MUST print "93 passed, 0 failed"
+node verify-program-delivery.mjs   # MUST end "0 failed"
 node test-history-versions.mjs       # every day scored against its own programme
 npm run build                        # esbuild + tailwind, both, already wired
 ```

@@ -60,12 +60,22 @@ export async function syncVendor(vendor, days = 14) {
 }
 
 /**
- * This person's own rows. RLS limits them to their own; no user filter is sent
- * from here, exactly as in the coach app, so one policy governs both.
+ * One named person's rows. The query must name them.
+ *
+ * RLS is a backstop, not a filter. The policy on all three wearable tables is
+ * `(user_id = auth.uid()) OR is_coach_of(user_id)`, and the coach signs in to
+ * his own client app like anyone else — so his session satisfies the second
+ * branch and the server hands back every client's rows alongside his own. An
+ * unfiltered query here showed him Henna's sleep as his own. The policy is
+ * correct and the coach dashboard depends on it; the query is what was wrong.
+ *
+ * So: no id, no query. A missing id must never widen the result to everyone
+ * the signed-in person happens to coach.
  */
-export async function loadWearables() {
+export async function loadWearables(userId) {
   const c = getClient();
   if (!c || !isConfigured()) return { ok: false, connections: [], days: [], workouts: [] };
+  if (!userId) return { ok: false, connections: [], days: [], workouts: [] };
 
   const since = new Date();
   since.setDate(since.getDate() - WINDOW_DAYS);
@@ -73,15 +83,20 @@ export async function loadWearables() {
 
   try {
     const [connections, days, workouts] = await Promise.all([
-      c.from("wearable_connections").select("vendor, status, connected_at, last_synced_at"),
+      c
+        .from("wearable_connections")
+        .select("user_id, vendor, status, connected_at, last_synced_at")
+        .eq("user_id", userId),
       c
         .from("wearable_days")
-        .select("vendor, day, sleep_minutes, readiness, resting_hr, hrv, steps")
+        .select("user_id, vendor, day, sleep_minutes, readiness, resting_hr, hrv, steps")
+        .eq("user_id", userId)
         .gte("day", sinceKey)
         .order("day", { ascending: false }),
       c
         .from("wearable_workouts")
-        .select("vendor, day, sport, source, started_at, duration_minutes, distance_km, hr_avg, hr_max")
+        .select("user_id, vendor, day, sport, source, started_at, duration_minutes, distance_km, hr_avg, hr_max")
+        .eq("user_id", userId)
         .gte("day", sinceKey)
         .order("started_at", { ascending: false }),
     ]);
@@ -111,6 +126,60 @@ export function isRealSession(w) {
   return true;
 }
 
+/**
+ * Which row wins when one day carries more than one.
+ *
+ * A person can hold two rows for the same day as soon as a second vendor maps:
+ * Oura and Polar both report sleep and readiness. Oura is preferred because it
+ * is the sleep source — the ring is worn for the night, and readiness is an
+ * Oura score with no Polar equivalent. Polar is kept as the fallback for a day
+ * Oura did not record.
+ *
+ * Written as data, not as a chain of ifs, so a third vendor is one entry here
+ * rather than a new branch in the collapse. A vendor missing from this list
+ * sorts after every listed one.
+ */
+export const VENDOR_PREFERENCE = ["oura", "polar"];
+
+function vendorRank(vendor) {
+  const i = VENDOR_PREFERENCE.indexOf(vendor);
+  return i === -1 ? VENDOR_PREFERENCE.length : i;
+}
+
+// Lower sorts first. Whose row it is outranks which vendor it came from: see
+// collapseDays for why that first term exists at all.
+function dayRowRank(row, subjectId) {
+  const foreign = subjectId != null && row.user_id != null && row.user_id !== subjectId;
+  return [foreign ? 1 : 0, vendorRank(row.vendor)];
+}
+
+function outranks(a, b, subjectId) {
+  const ra = dayRowRank(a, subjectId);
+  const rb = dayRowRank(b, subjectId);
+  for (let i = 0; i < ra.length; i++) if (ra[i] !== rb[i]) return ra[i] < rb[i];
+  return false; // equal rank: the row already held keeps the day
+}
+
+/**
+ * One row per day, newest day first.
+ *
+ * `subjectId` is defence in depth and nothing more. loadWearables now names the
+ * person in every query, so a row belonging to somebody else should not reach
+ * here at all. If one ever does — a widened query, a changed policy — the
+ * subject's own row must still keep its day rather than losing it to whichever
+ * vendor happened to rank higher. Omitted, the vendor preference decides alone,
+ * which is the right answer for rows already known to be one person's.
+ */
+export function collapseDays(days, subjectId = null) {
+  const best = new Map();
+  (days || []).forEach((r) => {
+    if (!r || !r.day) return;
+    const held = best.get(r.day);
+    if (!held || outranks(r, held, subjectId)) best.set(r.day, r);
+  });
+  return [...best.values()].sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0));
+}
+
 function mean(rows, key) {
   const vals = rows.map((r) => r[key]).filter((v) => v != null).map(Number).filter((v) => !isNaN(v));
   if (!vals.length) return null;
@@ -133,15 +202,20 @@ export function fmtNum(v, digits = 0) {
 /**
  * The recovery picture. A night with no reading stays empty — never a zero and
  * never guessed from the nights either side of it.
+ *
+ * `days` is collapsed to one row per day first, so every slice and average
+ * below counts DAYS. Before that, `avg7` averaged seven array entries: with two
+ * vendors that is three and a half days, and with a coach's unfiltered query it
+ * was roughly two days spread across three different bodies.
  */
-export function buildRecovery(days, workouts) {
-  const rows = [...(days || [])].sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0));
+export function buildRecovery(days, workouts, subjectId = null) {
+  const rows = collapseDays(days, subjectId);
   if (!rows.length && !(workouts || []).length) return null;
 
   // The newest row with an actual night in it: today's row exists from midnight
   // with steps only, and showing that as "last night" would read as a lost night.
   const latest = rows.find((r) => r.sleep_minutes != null || r.readiness != null) || null;
-  const last7 = rows.slice(0, 7);
+  const last7 = rows.slice(0, 7); // seven distinct days, post-collapse
 
   const series = rows
     .slice(0, 30)

@@ -61,10 +61,14 @@ From a repo root. In a fresh clone (which is every cloud session) install first:
 
 ```
 npm install                          # node_modules is not committed
-node verify-program-delivery.mjs   # MUST end "0 failed"
-node test-history-versions.mjs       # every day scored against its own programme
+node verify-program-delivery.mjs     # MUST end "0 failed"
+node test-history-versions.mjs       # MUST end "0 failed" — each day on its own programme
+node test-wearable-scope.mjs         # MUST end "0 failed" — wearable rows belong to one person
 npm run build                        # esbuild + tailwind, both, already wired
 ```
+
+Never pin a pass count in this block. The old "51 passed" line rotted the first
+time anyone added a check; `MUST end "0 failed"` does not.
 
 - **Never build if the verify script does not pass.** It is the gate.
 - `npm run build` writes `bundle.js` and `styles.css`. Commit both.

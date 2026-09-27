@@ -7,7 +7,7 @@
     "build": "npx esbuild src/entry.jsx --bundle --minify --outfile=bundle.js --loader:.jsx=jsx && tailwindcss -i ./src/input.css -o ./styles.css"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.112.4",
+    "@supabase/supabase-js": "2.117.2",
     "lucide-react": "1.35.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",

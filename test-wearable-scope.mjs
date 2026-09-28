@@ -78,6 +78,12 @@ function buildStub() {
     .replace(
       /import \{ SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY \} from "\.\.\/config\.jsx";/,
       'const SUPABASE_URL = "x"; const SUPABASE_PUBLISHABLE_KEY = "y";'
+    )
+    // The tmp file lives at the repo root, not src/core, so wearables.js's own
+    // relative import needs the path adjusted the same way the two above do.
+    .replace(
+      /import \{ isRealSession \} from "\.\/cardio\.js";/,
+      'import { isRealSession } from "./src/core/cardio.js";'
     );
   if (stripped === src) {
     console.log("Import lines did not match — wearables.js has changed shape. Update this script.");

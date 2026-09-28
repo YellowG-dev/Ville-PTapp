@@ -21,6 +21,7 @@
 
 import { getClient, isConfigured } from "./supabase.js";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "../config.jsx";
+import { isRealSession } from "./cardio.js";
 
 const WINDOW_DAYS = 120;
 
@@ -117,14 +118,10 @@ export async function loadWearables(userId) {
 
 /* ------------------------------- shaping --------------------------------- */
 
-// Oura logs housework and walking as "workouts". Only what it recorded with
-// heart rate, or what was entered by hand, is a session someone chose to do.
-// Polar rows have no source field and are all real sessions.
-export function isRealSession(w) {
-  if (!w) return false;
-  if (w.vendor === "oura") return w.source === "workout_heart_rate" || w.source === "manual";
-  return true;
-}
+// Moved to cardio.js (Step 9 Phase 2) so it can be tested in plain node
+// without pulling in this file's supabase.js/config.jsx imports. Re-exported
+// so every existing importer of isRealSession from here keeps working.
+export { isRealSession };
 
 /**
  * Which row wins when one day carries more than one.

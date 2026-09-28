@@ -36,6 +36,7 @@ import { THEMES, THEME_IDS } from "./core/themes.js";
 import { variantsFor } from "./core/patterns.js";
 import { computeStreak, buildHeatmapCells } from "./core/stats.js";
 import { createStore, localStorageAdapter } from "./core/storage.js";
+import { removeActivityOverride } from "./core/overrides.js";
 import { isConfigured, currentUser, onAuthChange, sendMagicLink, verifyCode, signOut,
          getCoachSharing, setCoachSharing } from "./core/supabase.js";
 import {
@@ -667,15 +668,7 @@ function AppInner({ setThemeId }) {
 
   const removeActivity = useCallback((d, id) => {
     const key = dateKey(d);
-    writeOverrides((prev) => {
-      if (!prev[key]?.activities) return prev;
-      const day = { ...prev[key] };
-      day.activities = day.activities.filter((a) => a.id !== id);
-      const next = { ...prev };
-      if (day.activities.length === 0 && !PROGRAM.slots.some((sl) => sl in day)) delete next[key];
-      else next[key] = day;
-      return next;
-    });
+    writeOverrides((prev) => removeActivityOverride(prev, key, id));
   }, [writeOverrides]);
 
   /* -------------------------------- Derived ------------------------------- */

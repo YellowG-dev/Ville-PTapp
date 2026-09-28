@@ -30,6 +30,7 @@ export const OPTIONAL_KEYS = [
   "schemaVersion", "testing", "mobility", "nutritionTargets", "programView",
   "deloadAnchor", "deloadWave", "gentlerNote", "restLabel", "restSubtitle",
   "showDeloadToggle", "usesHeartRate", "startDate",
+  "hrZones", "cardioTypes",
 ];
 
 /* -------------------------------- validate -------------------------------- */
@@ -70,6 +71,66 @@ export function validate(def) {
   if (!slots.every(isStr)) E("every entry in slots must be a non-empty string");
   if (new Set(slots).size !== slots.length) E("slots contains duplicates");
 
+  // --- hrZones: the client's one zone table, % of max HR. Referenced by
+  //     block.cardio.zoneAvg/zoneMax below, so it is validated first.
+  const hrZoneIds = [];
+  if (def.hrZones !== undefined) {
+    if (!Array.isArray(def.hrZones)) E("hrZones must be an array");
+    else {
+      def.hrZones.forEach((z, i) => {
+        if (!isObj(z)) { E(`hrZones[${i}] is not an object`); return; }
+        if (isStr(z.id)) hrZoneIds.push(z.id);
+        else E(`hrZones[${i}].id must be a non-empty string`);
+        if (!isStr(z.label)) E(`hrZones[${i}].label must be a non-empty string`);
+        const okRange = typeof z.pctMin === "number" && typeof z.pctMax === "number" &&
+          0 < z.pctMin && z.pctMin < z.pctMax && z.pctMax <= 100;
+        if (!okRange) {
+          E(`hrZones[${i}] must have 0 < pctMin < pctMax <= 100 (got pctMin=${JSON.stringify(z.pctMin)}, pctMax=${JSON.stringify(z.pctMax)})`);
+        }
+      });
+      const dup = hrZoneIds.filter((v, i) => hrZoneIds.indexOf(v) !== i);
+      if (dup.length) E(`hrZones has duplicate ids: ${[...new Set(dup)].join(", ")}`);
+    }
+  }
+
+  // --- cardioTypes: the coach's list for extra cardio. `slot` means "a
+  //     workout of this sport satisfies that planned slot"; without it the
+  //     type is extras-only. Id "other" is reserved — it is implicit and
+  //     never listed.
+  if (def.cardioTypes !== undefined) {
+    if (!Array.isArray(def.cardioTypes)) E("cardioTypes must be an array");
+    else {
+      const ids = [];
+      const sportOwners = {};
+      def.cardioTypes.forEach((t, i) => {
+        if (!isObj(t)) { E(`cardioTypes[${i}] is not an object`); return; }
+        if (isStr(t.id)) {
+          if (t.id === "other") E(`cardioTypes[${i}].id "other" is reserved`);
+          ids.push(t.id);
+        } else E(`cardioTypes[${i}].id must be a non-empty string`);
+        if (!isStr(t.label)) E(`cardioTypes[${i}].label must be a non-empty string`);
+        if (t.sports !== undefined) {
+          if (!Array.isArray(t.sports) || !t.sports.every(isStr)) {
+            E(`cardioTypes[${i}].sports must be an array of strings`);
+          } else {
+            t.sports.forEach((s) => {
+              if (!sportOwners[s]) sportOwners[s] = [];
+              sportOwners[s].push(isStr(t.id) ? t.id : `cardioTypes[${i}]`);
+            });
+          }
+        }
+        if (t.slot !== undefined && (!isStr(t.slot) || !slots.includes(t.slot))) {
+          E(`cardioTypes[${i}].slot "${t.slot}" is not in slots`);
+        }
+      });
+      const dup = ids.filter((v, i) => ids.indexOf(v) !== i);
+      if (dup.length) E(`cardioTypes has duplicate ids: ${[...new Set(dup)].join(", ")}`);
+      for (const [sport, owners] of Object.entries(sportOwners)) {
+        if (owners.length > 1) W(`sport "${sport}" is listed under more than one cardio type: ${owners.join(", ")}`);
+      }
+    }
+  }
+
   // --- slotMeta: app.jsx line 2129 reads meta.cat off this. A slot with no
   //     entry here is the crash the whole contract exists to prevent.
   if (isObj(def.slotMeta)) {
@@ -100,6 +161,9 @@ export function validate(def) {
             if (!isObj(ex)) E(`blocks.${g}.${key}.exercises[${i}] is not an object`);
             else if (!isStr(ex.id)) E(`blocks.${g}.${key}.exercises[${i}] has no id`);
           });
+        }
+        if (blk.cardio !== undefined) {
+          validateBlockCardio(blk, g, key, slots, hrZoneIds, E, W);
         }
       }
     }
@@ -211,6 +275,46 @@ export function validate(def) {
   if (bad.length) E(`non-data values (function/symbol) at: ${bad.slice(0, 5).join(", ")}`);
 
   return { ok: errors.length === 0, errors, warnings };
+}
+
+/* -------------------------------- cardio ------------------------------------ */
+
+/**
+ * A structured target on a planned block: `blocks[slot][key].cardio`.
+ * All fields optional. `durationTaskId` names which task in this SAME block's
+ * `exercises` logs the minutes actually done — weeklyCardioMinutes reads it
+ * from there rather than guessing from an id pattern.
+ */
+function validateBlockCardio(blk, group, key, slots, hrZoneIds, E, W) {
+  const c = blk.cardio;
+  const at = `blocks.${group}.${key}.cardio`;
+  if (!isObj(c)) { E(`${at} must be an object`); return; }
+
+  for (const f of ["durationMin", "distanceKm"]) {
+    if (c[f] !== undefined && !(typeof c[f] === "number" && c[f] > 0)) {
+      E(`${at}.${f} must be a positive number`);
+    }
+  }
+  if (c.pace !== undefined && !(isStr(c.pace) && /^\d{1,2}:[0-5]\d$/.test(c.pace))) {
+    E(`${at}.pace must match m:ss or mm:ss, target only (got ${JSON.stringify(c.pace)})`);
+  }
+  for (const f of ["zoneAvg", "zoneMax"]) {
+    if (c[f] === undefined) continue;
+    if (!isStr(c[f])) E(`${at}.${f} must be a string id`);
+    else if (!hrZoneIds.includes(c[f])) E(`${at}.${f} "${c[f]}" is not an id in hrZones`);
+  }
+  if (c.note !== undefined && !isStr(c.note)) E(`${at}.note must be a non-empty string when present`);
+  if (c.durationTaskId !== undefined) {
+    if (!isStr(c.durationTaskId)) {
+      E(`${at}.durationTaskId must be a string`);
+    } else {
+      const exercises = Array.isArray(blk.exercises) ? blk.exercises : [];
+      if (!exercises.some((ex) => isObj(ex) && ex.id === c.durationTaskId)) {
+        E(`${at}.durationTaskId "${c.durationTaskId}" is not the id of a task in this block's exercises`);
+      }
+    }
+  }
+  if (group === "strength") W(`${at} is on a block whose slot is "strength"`);
 }
 
 /* ------------------------------ programView -------------------------------- */

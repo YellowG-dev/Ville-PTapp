@@ -1181,28 +1181,32 @@ function AppInner({ setThemeId }) {
               {authMsg && <p style={{ color: TEXT_MUTED }} className="text-[11px] mt-2">{authMsg}</p>}
             </div>
 
-            <div style={{ borderColor: BORDER }} className="border-t pt-4">
-              <p className="text-xs font-semibold mb-1">Backup</p>
-              <p style={{ color: TEXT_MUTED }} className="text-[11px] mb-2">
-                Your log lives on this device. Copy a backup now and then, and keep it somewhere safe.
-              </p>
-              <div className="flex gap-1.5 mb-2">
-                <button onClick={exportBackup} style={{ borderColor: BORDER }}
-                        className="flex-1 text-xs font-semibold py-1.5 rounded-lg border">Show backup</button>
-                <button onClick={copyBackup} style={{ borderColor: BORDER }}
-                        className="flex-1 text-xs font-semibold py-1.5 rounded-lg border">{copyStatus || "Copy"}</button>
+            {/* Signed in, the log already syncs, and Restore would overwrite the
+                cloud copy with whatever is pasted — so the box is signed-out only. */}
+            {!authUser && (
+              <div style={{ borderColor: BORDER }} className="border-t pt-4">
+                <p className="text-xs font-semibold mb-1">Backup</p>
+                <p style={{ color: TEXT_MUTED }} className="text-[11px] mb-2">
+                  Your log lives on this device. Copy a backup now and then, and keep it somewhere safe.
+                </p>
+                <div className="flex gap-1.5 mb-2">
+                  <button onClick={exportBackup} style={{ borderColor: BORDER }}
+                          className="flex-1 text-xs font-semibold py-1.5 rounded-lg border">Show backup</button>
+                  <button onClick={copyBackup} style={{ borderColor: BORDER }}
+                          className="flex-1 text-xs font-semibold py-1.5 rounded-lg border">{copyStatus || "Copy"}</button>
+                </div>
+                <textarea value={backupText} onChange={(e) => setBackupText(e.target.value)} rows={3}
+                          placeholder="Backup appears here — or paste one to restore"
+                          style={{ fontFamily: FONT_MONO, background: BG, borderColor: BORDER }}
+                          className="w-full text-[10px] p-2 rounded-lg border" />
+                <div className="flex items-center justify-between mt-2">
+                  <button onClick={importBackup} style={{ color: ACCENT }} className="text-[11px] font-semibold">
+                    Restore from above
+                  </button>
+                  {importStatus && <span style={{ color: TEXT_MUTED }} className="text-[11px]">{importStatus}</span>}
+                </div>
               </div>
-              <textarea value={backupText} onChange={(e) => setBackupText(e.target.value)} rows={3}
-                        placeholder="Backup appears here — or paste one to restore"
-                        style={{ fontFamily: FONT_MONO, background: BG, borderColor: BORDER }}
-                        className="w-full text-[10px] p-2 rounded-lg border" />
-              <div className="flex items-center justify-between mt-2">
-                <button onClick={importBackup} style={{ color: ACCENT }} className="text-[11px] font-semibold">
-                  Restore from above
-                </button>
-                {importStatus && <span style={{ color: TEXT_MUTED }} className="text-[11px]">{importStatus}</span>}
-              </div>
-            </div>
+            )}
             {/* Where today's programme came from. Worth showing: "compiled" after
                 a coach has published means delivery is not reaching this app,
                 and that is otherwise invisible. */}
@@ -2125,10 +2129,13 @@ function CalendarView(p) {
         </div>
       )}
 
-      <div className="grid grid-cols-7 gap-1.5 mb-1">
-        {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((d) => (
-          <div key={d} style={{ color: TEXT_MUTED }} className="text-center text-[10px] font-medium">{d}</div>
-        ))}
+      <div className="flex gap-1.5 mb-1">
+        {PROGRAM.showDeloadToggle && <div className="w-7 shrink-0" />}
+        <div className="grid grid-cols-7 gap-1.5 flex-1">
+          {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((d) => (
+            <div key={d} style={{ color: TEXT_MUTED }} className="text-center text-[10px] font-medium">{d}</div>
+          ))}
+        </div>
       </div>
 
       <div className="space-y-1.5">

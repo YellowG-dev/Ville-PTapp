@@ -84,5 +84,23 @@ ok("ring still counts every section (render-only change)",
 ok("ring percentage formula unchanged",
    src.includes("const pct = countable.length ? doneCount / countable.length : 0;"));
 
+console.log("\n--- Calendar header and Backup box ---");
+{
+  const h = src.indexOf(`{["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map`);
+  const head = src.slice(src.lastIndexOf("\n", src.lastIndexOf("<div className=\"flex gap-1.5 mb-1\">", h)), h);
+  ok("weekday header is a flex row like a week row", head.includes(`<div className="flex gap-1.5 mb-1">`));
+  ok("header spacer is w-7 shrink-0 and only when showDeloadToggle",
+     head.includes(`{PROGRAM.showDeloadToggle && <div className="w-7 shrink-0" />}`));
+  ok("header labels sit in the same grid-cols-7 flex-1 as the day cells",
+     head.includes(`<div className="grid grid-cols-7 gap-1.5 flex-1">`) &&
+     src.includes(`<div className="grid grid-cols-7 gap-1.5 flex-1">\n                {week.map(`));
+  ok("week row has the same w-7 toggle guarded by showDeloadToggle",
+     /\{PROGRAM\.showDeloadToggle && \(\s*<button[^]*?w-7 self-stretch/.test(src));
+  const bk = src.indexOf(`<p className="text-xs font-semibold mb-1">Backup</p>`);
+  const guard = src.lastIndexOf("{!authUser && (", bk);
+  ok("Backup box renders only when signed out", guard !== -1 && bk - guard < 200);
+  ok("exportBackup / importBackup are kept", src.includes("const exportBackup") && src.includes("const importBackup"));
+}
+
 console.log(failures ? `\n${failures} FAILED` : "\nALL CHECKS PASSED");
 process.exit(failures ? 1 : 0);

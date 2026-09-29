@@ -198,19 +198,38 @@ console.log("\nisRealSession");
 ok("oura workout_heart_rate is real", () => assert.equal(isRealSession({ vendor: "oura", source: "workout_heart_rate" }), true));
 ok("oura manual is real", () => assert.equal(isRealSession({ vendor: "oura", source: "manual" }), true));
 ok("oura autodetected is not real", () => assert.equal(isRealSession({ vendor: "oura", source: "autodetected" }), false));
-ok("oura confirmed is not real", () => assert.equal(isRealSession({ vendor: "oura", source: "confirmed" }), false));
+// Rule set by John 29 Sep 2026: confirmed Oura rows count unless housework-type sports or a short walk.
+ok("oura confirmed houseWork 16 min is not real", () => assert.equal(isRealSession({ vendor: "oura", source: "confirmed", sport: "houseWork", duration_minutes: 16 }), false));
+ok("oura confirmed yardwork 16 min is not real", () => assert.equal(isRealSession({ vendor: "oura", source: "confirmed", sport: "yardwork", duration_minutes: 16 }), false));
+ok("oura confirmed stretching 16 min is not real", () => assert.equal(isRealSession({ vendor: "oura", source: "confirmed", sport: "stretching", duration_minutes: 16 }), false));
+ok("oura confirmed other 16 min is not real", () => assert.equal(isRealSession({ vendor: "oura", source: "confirmed", sport: "other", duration_minutes: 16 }), false));
+ok("oura confirmed walking 29 min is not real", () => assert.equal(isRealSession({ vendor: "oura", source: "confirmed", sport: "walking", duration_minutes: 29 }), false));
+ok("oura confirmed walking 30 min is real", () => assert.equal(isRealSession({ vendor: "oura", source: "confirmed", sport: "walking", duration_minutes: 30 }), true));
+ok("oura confirmed walking is not real", () => assert.equal(isRealSession({ vendor: "oura", source: "confirmed", sport: "walking" }), false));
+ok("oura confirmed running 49 min is real", () => assert.equal(isRealSession({ vendor: "oura", source: "confirmed", sport: "running", duration_minutes: 49 }), true));
+ok("oura confirmed strengthTraining 49 min is real", () => assert.equal(isRealSession({ vendor: "oura", source: "confirmed", sport: "strengthTraining", duration_minutes: 49 }), true));
+ok("oura confirmed yoga 49 min is real", () => assert.equal(isRealSession({ vendor: "oura", source: "confirmed", sport: "yoga", duration_minutes: 49 }), true));
+ok("oura confirmed cycling 49 min is real", () => assert.equal(isRealSession({ vendor: "oura", source: "confirmed", sport: "cycling", duration_minutes: 49 }), true));
+ok("oura confirmed hiking 49 min is real", () => assert.equal(isRealSession({ vendor: "oura", source: "confirmed", sport: "hiking", duration_minutes: 49 }), true));
+ok("oura confirmed tennis 49 min is real", () => assert.equal(isRealSession({ vendor: "oura", source: "confirmed", sport: "tennis", duration_minutes: 49 }), true));
+ok("oura confirmed HIIT 49 min is real", () => assert.equal(isRealSession({ vendor: "oura", source: "confirmed", sport: "HIIT", duration_minutes: 49 }), true));
+ok("oura confirmed swimming 49 min is real", () => assert.equal(isRealSession({ vendor: "oura", source: "confirmed", sport: "swimming", duration_minutes: 49 }), true));
+ok("oura confirmed paddleSports 49 min is real", () => assert.equal(isRealSession({ vendor: "oura", source: "confirmed", sport: "paddleSports", duration_minutes: 49 }), true));
+ok("oura autodetected running is still not real", () => assert.equal(isRealSession({ vendor: "oura", source: "autodetected", sport: "running", duration_minutes: 49 }), false));
+ok("oura manual housework still counts (client entered it)", () => assert.equal(isRealSession({ vendor: "oura", source: "manual", sport: "houseWork", duration_minutes: 16 }), true));
 ok("polar rows are always real, no source field needed", () => assert.equal(isRealSession({ vendor: "polar" }), true));
 ok("a missing workout is not real", () => assert.equal(isRealSession(null), false));
 
-ok("recordedWorkouts filters out autodetected/confirmed Oura rows", () => {
+ok("recordedWorkouts filters out autodetected and non-sport confirmed Oura rows", () => {
   const rows = [
     { vendor: "oura", source: "autodetected", vendor_session_id: "a" },
-    { vendor: "oura", source: "confirmed", vendor_session_id: "b" },
+    { vendor: "oura", source: "confirmed", sport: "houseWork", duration_minutes: 16, vendor_session_id: "b" },
+    { vendor: "oura", source: "confirmed", sport: "running", duration_minutes: 49, vendor_session_id: "e" },
     { vendor: "oura", source: "manual", vendor_session_id: "c" },
     { vendor: "polar", vendor_session_id: "d" },
   ];
   const kept = recordedWorkouts(rows).map((w) => w.vendor_session_id);
-  assert.deepEqual(kept, ["c", "d"]);
+  assert.deepEqual(kept, ["e", "c", "d"]);
 });
 
 console.log("\ndedupe");

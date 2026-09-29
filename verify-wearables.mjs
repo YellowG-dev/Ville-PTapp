@@ -27,7 +27,9 @@ try {
 }
 const stripped = src
   .replace(/import \{ getClient, isConfigured \} from "\.\/supabase\.js";/, "const getClient = () => null; const isConfigured = () => false;")
-  .replace(/import \{ SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY \} from "\.\.\/config\.jsx";/, 'const SUPABASE_URL = "x"; const SUPABASE_PUBLISHABLE_KEY = "y";');
+  .replace(/import \{ SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY \} from "\.\.\/config\.jsx";/, 'const SUPABASE_URL = "x"; const SUPABASE_PUBLISHABLE_KEY = "y";')
+  // The temp file sits at the repo root, so wearables.js's sibling import needs its real path.
+  .replace('from "./cardio.js"', 'from "./src/core/cardio.js"');
 if (stripped === src) {
   console.log("Import lines did not match — wearables.js has changed shape. Update this script.");
   process.exit(1);
@@ -39,7 +41,7 @@ unlinkSync(TMP);
 /* --- what counts as a session ------------------------------------------- */
 // Oura files walking and housework as workouts. Counting them as training
 // would have shown 385 sessions where there were 54 on one real account.
-check("oura auto-detected is not a session", W.isRealSession({ vendor: "oura", source: "confirmed" }), false);
+check("oura confirmed housework is not a session", W.isRealSession({ vendor: "oura", source: "confirmed", sport: "houseWork" }), false);
 check("oura heart-rate workout is a session", W.isRealSession({ vendor: "oura", source: "workout_heart_rate" }), true);
 check("oura manual entry is a session", W.isRealSession({ vendor: "oura", source: "manual" }), true);
 check("polar rows are sessions", W.isRealSession({ vendor: "polar", source: null }), true);

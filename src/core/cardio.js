@@ -17,12 +17,22 @@ import { blocksFor } from "./program-schema.js";
 
 /* ------------------------------ recorded ----------------------------------- */
 
-// Oura logs housework and walking as "workouts". Only what it recorded with
-// heart rate, or what was entered by hand, is a session someone chose to do.
-// Polar rows have no source field and are all real sessions.
+// Oura logs housework and walking as "workouts". A session counts when the
+// client started or entered it (workout_heart_rate, manual), or when Oura
+// detected it and the client accepted it ("confirmed") AND it is a real sport.
+// Set by John on 29 Sep 2026: these sports never count, and a confirmed walk
+// counts only from 30 minutes. Autodetected rows the client has not accepted
+// never count. Polar rows have no source field and are all real sessions.
+export const OURA_EXCLUDED_SPORTS = ["houseWork", "yardwork", "stretching", "other"];
+export const OURA_WALK_MIN_MINUTES = 30;
+
 export function isRealSession(w) {
   if (!w) return false;
-  if (w.vendor === "oura") return w.source === "workout_heart_rate" || w.source === "manual";
+  if (w.vendor !== "oura") return true;
+  if (w.source === "workout_heart_rate" || w.source === "manual") return true;
+  if (w.source !== "confirmed") return false;
+  if (OURA_EXCLUDED_SPORTS.includes(w.sport)) return false;
+  if (w.sport === "walking") return Number(w.duration_minutes) >= OURA_WALK_MIN_MINUTES;
   return true;
 }
 

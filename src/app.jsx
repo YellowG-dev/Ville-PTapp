@@ -238,12 +238,16 @@ function StrengthOffers({ workouts, program, color, onAck }) {
     <div key={`${w.vendor}:${w.vendor_session_id}`} className="mt-2">
       <WorkoutOffer label={`Recorded strength session${w.vendor ? ` \u00b7 ${w.vendor}` : ""}`}
                     text={workoutSummary(w, program)} color={color}
-                    onConfirm={() => onAck(w)} onDismiss={() => onAck(w)} />
+                    confirmLabel="OK" onConfirm={() => onAck(w)} />
     </div>
   ));
 }
 
-/** Confirm / Dismiss for one wearable workout. */
+/**
+ * Confirm / Dismiss for one wearable workout. Without `onDismiss` only the one
+ * button shows — a recorded gym session on a planned strength day has nothing
+ * to choose between, so it gets a single "OK" (decided by John, 1 Oct 2026).
+ */
 function WorkoutOffer({ label, text, confirmLabel, onConfirm, onDismiss, color, dismissLabel }) {
   const { BG, BORDER, TEXT_MUTED, TEXT_SECONDARY, TEXT_PRIMARY, ON_ACCENT } = useTheme();
   return (
@@ -253,8 +257,10 @@ function WorkoutOffer({ label, text, confirmLabel, onConfirm, onDismiss, color, 
       <div className="flex gap-2 mt-2">
         <button onClick={onConfirm} style={{ background: color, color: ON_ACCENT }}
                 className="text-[11px] font-semibold px-3 py-1 rounded-lg">{confirmLabel || "Confirm"}</button>
-        <button onClick={onDismiss} style={{ color: TEXT_SECONDARY, borderColor: BORDER }}
-                className="text-[11px] font-semibold px-3 py-1 rounded-lg border">{dismissLabel || "Dismiss"}</button>
+        {onDismiss && (
+          <button onClick={onDismiss} style={{ color: TEXT_SECONDARY, borderColor: BORDER }}
+                  className="text-[11px] font-semibold px-3 py-1 rounded-lg border">{dismissLabel || "Dismiss"}</button>
+        )}
       </div>
     </div>
   );

@@ -339,7 +339,13 @@ function validateBlockCardio(blk, group, key, slots, hrZoneIds, E, W) {
  *   mobility  — the mobility list
  *   week      — the generated default-week table, built from `schedule`
  *   table     — a small labelled grid (heart-rate zones, macro targets)
- *   nutrition — renders `nutritionTargets`
+ *   list      — a bullet list, or a numbered one with `ordered: true`
+ *   nutrition — renders `nutritionTargets`; optional `order` and `labels`
+ *
+ * Wherever a part takes text (`paragraph.text`/`strong`, `lines.items[]`,
+ * `list.items[]`) it may instead take an array of segments: a plain string,
+ * `{ "strong": "…" }` or `{ "em": "…" }`. Plain JSON only — no HTML, no markdown.
+ * `paragraph` and `list` also take `tone`: "secondary" or "muted".
  *
  * A card may also set `titleFrom: { group, key }` to take its title and subtitle
  * from a block rather than repeating them, and an `exercises` part may set
@@ -350,22 +356,51 @@ function validateBlockCardio(blk, group, key, slots, hrZoneIds, E, W) {
  * would survive a theme change and clash with it.
  */
 export const PROGRAM_VIEW_PART_TYPES = [
-  "heading", "paragraph", "lines", "exercises", "mobility", "week", "table", "nutrition",
+  "heading", "paragraph", "lines", "list", "exercises", "mobility", "week", "table", "nutrition",
 ];
+
+const TONES = ["secondary", "muted"];
 
 const COLOR_TOKEN = /^(accent|accent2|cat:[a-zA-Z][a-zA-Z0-9_-]*)$/;
 
 /** Keys each part type defines, used to catch typos that would render nothing. */
 const PART_KEYS = {
   heading:   ["text"],
-  paragraph: ["text", "strong"],
+  paragraph: ["text", "strong", "tone"],
   lines:     ["items"],
+  list:      ["items", "ordered", "tone"],
   exercises: ["group", "keys", "excludeTyped", "groupByBlock", "label"],
   mobility:  [],
   week:      ["week"],
   table:     ["columns", "rows"],
-  nutrition: [],
+  nutrition: ["order", "labels"],
 };
+
+/**
+ * Text that may be a plain string or an array of segments. Returns true when
+ * valid; otherwise reports through E and returns false. The wording for a bad
+ * plain value is the one the string-only checks always used.
+ */
+function validateRich(v, at, E) {
+  if (!Array.isArray(v)) {
+    if (!isStr(v)) { E(`${at} must be a non-empty string`); return false; }
+    return true;
+  }
+  if (!v.length) { E(`${at} must not be an empty array of segments`); return false; }
+  let good = true;
+  v.forEach((seg, k) => {
+    if (typeof seg === "string") {
+      if (!seg.length) { E(`${at}[${k}] is an empty string`); good = false; }
+      return;
+    }
+    const keys = isObj(seg) ? Object.keys(seg) : [];
+    if (keys.length !== 1 || !["strong", "em"].includes(keys[0]) || !isStr(seg[keys[0]])) {
+      E(`${at}[${k}] must be a string, { "strong": "…" } or { "em": "…" } (got ${JSON.stringify(seg)})`);
+      good = false;
+    }
+  });
+  return good;
+}
 
 function validateProgramView(def, E, W) {
   const pv = def.programView;
@@ -447,13 +482,26 @@ function validatePart(def, part, at, E, W) {
   }
 
   if (part.type === "paragraph") {
-    if (!isStr(part.text)) E(`${at}.text must be a non-empty string`);
-    if (part.strong !== undefined && !isStr(part.strong)) E(`${at}.strong must be a non-empty string when present`);
+    validateRich(part.text, `${at}.text`, E);
+    if (part.strong !== undefined) validateRich(part.strong, `${at}.strong`, E);
+    if (part.tone !== undefined && !TONES.includes(part.tone)) {
+      E(`${at}.tone must be "secondary" or "muted" (got ${JSON.stringify(part.tone)})`);
+    }
   }
 
   if (part.type === "lines") {
     if (!Array.isArray(part.items) || !part.items.length) E(`${at}.items must be a non-empty array`);
-    else part.items.forEach((t, k) => { if (!isStr(t)) E(`${at}.items[${k}] must be a non-empty string`); });
+    else part.items.forEach((t, k) => validateRich(t, `${at}.items[${k}]`, E));
+  }
+
+  if (part.type === "list") {
+    if (!Array.isArray(part.items)) E(`${at}.items must be an array`);
+    else if (!part.items.length) E(`${at}.items must be a non-empty array`);
+    else part.items.forEach((t, k) => validateRich(t, `${at}.items[${k}]`, E));
+    if (part.ordered !== undefined && typeof part.ordered !== "boolean") E(`${at}.ordered must be a boolean`);
+    if (part.tone !== undefined && !TONES.includes(part.tone)) {
+      E(`${at}.tone must be "secondary" or "muted" (got ${JSON.stringify(part.tone)})`);
+    }
   }
 
   if (part.type === "exercises") {
@@ -484,6 +532,24 @@ function validatePart(def, part, at, E, W) {
 
   if (part.type === "nutrition" && def.nutritionTargets === undefined) {
     E(`${at} is a nutrition part but the definition has no nutritionTargets`);
+  }
+
+  if (part.type === "nutrition") {
+    const targets = isObj(def.nutritionTargets) ? def.nutritionTargets : null;
+    if (part.order !== undefined) {
+      if (!Array.isArray(part.order) || !part.order.length || !part.order.every(isStr)) {
+        E(`${at}.order must be a non-empty array of day-type names`);
+      } else if (targets) {
+        part.order.forEach((k) => {
+          if (targets[k] === undefined) E(`${at}.order names "${k}", which is not in nutritionTargets`);
+        });
+      }
+    }
+    if (part.labels !== undefined) {
+      if (!isObj(part.labels) || !Object.values(part.labels).every(isStr)) {
+        E(`${at}.labels must be an object of day-type name to non-empty label`);
+      }
+    }
   }
 
   if (part.type === "week") {

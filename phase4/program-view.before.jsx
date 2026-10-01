@@ -38,34 +38,6 @@ function resolveColor(token, theme) {
   return theme.ACCENT;                     // "accent", undefined, anything odd
 }
 
-/* ------------------------------- Rich text -------------------------------- */
-
-/**
- * Text that is either a plain string or an array of segments: a string,
- * `{ strong }` or `{ em }`. A plain string is returned untouched, so a part
- * written before segments existed renders exactly the markup it always did.
- * Built from React elements only — no HTML string, never dangerouslySetInnerHTML.
- */
-function rich(value) {
-  if (!Array.isArray(value)) return value;
-  return value.map((seg, i) => {
-    if (typeof seg === "string") return <React.Fragment key={i}>{seg}</React.Fragment>;
-    if (seg && typeof seg === "object") {
-      if (typeof seg.strong === "string") return <strong key={i}>{seg.strong}</strong>;
-      if (typeof seg.em === "string") return <em key={i}>{seg.em}</em>;
-    }
-    return null;                          // a malformed segment draws nothing
-  });
-}
-
-/** `muted: true` predates `tone` and wins; otherwise "secondary" or "muted". */
-function toneColor(part, theme) {
-  const tone = part.muted ? "muted" : part.tone;
-  if (tone === "muted") return theme.TEXT_MUTED;
-  if (tone === "secondary") return theme.TEXT_SECONDARY;
-  return undefined;
-}
-
 /* ------------------------------- Body parts ------------------------------- */
 
 /** A block's movements, optionally without the prose notes kept alongside them. */
@@ -158,15 +130,10 @@ function renderTable(part, key, theme) {
 }
 
 /** Only one client has nutrition targets; for the rest this renders nothing. */
-function renderNutrition(part, key, program, theme) {
+function renderNutrition(key, program, theme) {
   const targets = program && program.nutritionTargets;
   if (!targets || typeof targets !== "object") return null;
-  // `order` puts the named day types first (any it leaves out follow, so no
-  // target is ever hidden); `labels` replaces the raw key. Neither: as before.
-  const keys = Object.keys(targets);
-  const named = Array.isArray(part.order) ? part.order.filter((k) => keys.includes(k)) : [];
-  const dayTypes = named.concat(keys.filter((k) => !named.includes(k)));
-  const labels = part.labels && typeof part.labels === "object" ? part.labels : {};
+  const dayTypes = Object.keys(targets);
   if (!dayTypes.length) return null;
   return (
     <div key={key} className="grid grid-cols-2 gap-3">
@@ -174,7 +141,7 @@ function renderNutrition(part, key, program, theme) {
         const t = targets[k] || {};
         return (
           <div key={k}>
-            <p className="text-xs font-semibold" style={{ color: theme.TEXT_SECONDARY }}>{labels[k] || k}</p>
+            <p className="text-xs font-semibold" style={{ color: theme.TEXT_SECONDARY }}>{k}</p>
             <p className="text-xs" style={{ fontFamily: theme.FONT_MONO }}>&lt; {t.cal} kcal</p>
             <p className="text-[11px]" style={{ fontFamily: theme.FONT_MONO, color: theme.TEXT_MUTED }}>
               P &gt;{t.protein}g · F &lt;{t.fat}g · C &lt;{t.carbs}g
@@ -202,14 +169,14 @@ function renderPart(part, key, ctx) {
 
     case "paragraph":
       return (
-        <p key={key} className="text-xs" style={toneColor(part, theme) ? { color: toneColor(part, theme) } : undefined}>
+        <p key={key} className="text-xs" style={part.muted ? { color: TEXT_MUTED } : undefined}>
           {part.strong ? (
             <>
-              <span className="font-semibold" style={{ color: TEXT_SECONDARY }}>{rich(part.strong)}</span>
+              <span className="font-semibold" style={{ color: TEXT_SECONDARY }}>{part.strong}</span>
               {" "}
-              {rich(part.text)}
+              {part.text}
             </>
-          ) : rich(part.text)}
+          ) : part.text}
         </p>
       );
 
@@ -217,23 +184,10 @@ function renderPart(part, key, ctx) {
       return (
         <div key={key} className="space-y-1">
           {(Array.isArray(part.items) ? part.items : []).map((line, i) => (
-            <p key={i} className="text-xs" style={{ color: TEXT_MUTED }}>{rich(line)}</p>
+            <p key={i} className="text-xs" style={{ color: TEXT_MUTED }}>{line}</p>
           ))}
         </div>
       );
-
-    case "list": {
-      const Tag = part.ordered ? "ol" : "ul";
-      const color = toneColor(part, theme);
-      return (
-        <Tag key={key} className={`text-xs ${part.ordered ? "list-decimal" : "list-disc"} ml-4 space-y-1`}
-             style={color ? { color } : undefined}>
-          {(Array.isArray(part.items) ? part.items : []).map((item, i) => (
-            <li key={i}>{rich(item)}</li>
-          ))}
-        </Tag>
-      );
-    }
 
     case "exercises":
       return renderExercises(part, key, ctx, color);
@@ -248,7 +202,7 @@ function renderPart(part, key, ctx) {
       return renderTable(part, key, theme);
 
     case "nutrition":
-      return renderNutrition(part, key, program, theme);
+      return renderNutrition(key, program, theme);
 
     default:
       return null;                        // an unknown part type draws nothing

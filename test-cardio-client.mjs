@@ -13,7 +13,7 @@
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { resolveSchedule, buildSections } from "./src/core/engine.js";
-import { matchDay, weeklyCardioMinutes, activityFromWorkout } from "./src/core/cardio.js";
+import { matchDay, weeklyCardioMinutes, activityFromWorkout, isCardioActivity } from "./src/core/cardio.js";
 
 let pass = 0, fail = 0;
 const ok = (name, fn) => {
@@ -130,6 +130,50 @@ ok("a programme with no cardioTypes offers every recorded workout as an extra", 
   const m = matchDay(MON, resolveSchedule(MON, "auto", {}, bare), [run("a")], bare, {});
   assert.deepEqual(m.planned, {});
   assert.equal(m.extras.length, 1);
+});
+
+console.log("\nstrength workouts (Phase 5b)");
+
+const gym = (id) => run(id, { sport: "strengthTraining", started_at: `${DAY}T18:00:00Z`, duration_minutes: 55, distance_km: null });
+const STR_PROGRAM = { ...PROGRAM, schedule: { A: { 1: { run: null, strength: "a" } }, B: { 1: { run: null, strength: "a" } } } };
+
+ok("planned strength day: the gym session is in `strength`, never planned or extras", () => {
+  const m = matchDay(MON, resolveSchedule(MON, "auto", {}, STR_PROGRAM), [gym("g")], STR_PROGRAM, {});
+  assert.equal(m.strength.length, 1);
+  assert.deepEqual(m.planned, {});
+  assert.deepEqual(m.extras, []);
+});
+ok("planned strength day: acknowledging writes no activity and no number, and is not re-offered", () => {
+  const ov = { [DAY]: { dismissedWorkouts: ["polar:g"] } }; // what the UI writes: the key only
+  assert.equal(ov[DAY].activities, undefined);
+  const log = {};
+  assert.equal(log[DAY], undefined);
+  const m = matchDay(MON, resolveSchedule(MON, "auto", ov, STR_PROGRAM), [gym("g")], STR_PROGRAM, ov);
+  assert.deepEqual(m.strength, []);
+  assert.equal(weeklyCardioMinutes(MON, log, ov, STR_PROGRAM), 0);
+});
+ok("non-strength day: the gym session is offered under Recorded as strength; confirm writes one kind:strength activity", () => {
+  const info = resolveSchedule(MON, "auto", {}, PROGRAM); // run day, no strength scheduled
+  const m = matchDay(MON, info, [gym("g")], PROGRAM, {});
+  assert.equal(m.strength.length, 1);
+  const act = activityFromWorkout(m.strength[0], PROGRAM);
+  const ov = { [DAY]: { activities: [act] } };
+  assert.equal(ov[DAY].activities.length, 1);
+  assert.equal(act.kind, "strength");
+  assert.equal(isCardioActivity(act), false);
+  assert.equal(weeklyCardioMinutes(MON, {}, ov, PROGRAM), 0);
+  const again = matchDay(MON, resolveSchedule(MON, "auto", ov, PROGRAM), [gym("g")], PROGRAM, ov);
+  assert.deepEqual(again.strength, []);
+});
+ok("skip day: a gym session is still `strength` (offered under Recorded), never a planned match", () => {
+  const ov = { [DAY]: { skip: "sick" } };
+  const m = matchDay(MON, resolveSchedule(MON, "auto", ov, STR_PROGRAM), [gym("g")], STR_PROGRAM, ov);
+  assert.equal(m.strength.length, 1);
+  assert.deepEqual(m.planned, {});
+});
+ok("a strength extra and a cardio extra on one day: only the cardio minutes count", () => {
+  const ov = { [DAY]: { activities: [activityFromWorkout(gym("g"), PROGRAM), activityFromWorkout(bike("b"), PROGRAM)] } };
+  assert.equal(weeklyCardioMinutes(MON, {}, ov, PROGRAM), 60);
 });
 
 console.log("\nwearable rows carry vendor_session_id");

@@ -44,7 +44,7 @@ import {
   queueSettings, flushNow, watchConnectivity,
 } from "./core/sync.js";
 import {
-  matchDay, activityFromWorkout, zoneBpm, weeklyCardioMinutes,
+  matchDay, activityFromWorkout, zoneBpm, weeklyCardioMinutes, isStrengthWorkout, isCardioActivity,
 } from "./core/cardio.js";
 import {
   loadWearables, connectUrl, syncVendor, buildRecovery, connectionLabel, fmtSleep, fmtNum,
@@ -191,6 +191,7 @@ function extraDetail(a, hrMax, program) {
     const z = zones.find((zz) => pct >= zz.pctMin && (pct < zz.pctMax || (zz.pctMax === 100 && pct <= 100)));
     if (z) out.push(z.label);
   }
+  if (!isCardioActivity(a)) out.push("not cardio");
   return out.join(" \u00b7 ");
 }
 
@@ -210,9 +211,15 @@ function workoutSummary(w, program) {
  * extra instead. Unconfirmed workouts count for nothing either way.
  */
 function splitMatches(date, info, workouts, program, overrides) {
-  const { planned, extras } = matchDay(date, info, workouts || [], program, overrides);
+  const { planned, extras, strength } = matchDay(date, info, workouts || [], program, overrides);
   const bySlot = {};
   const recorded = [...extras];
+  // Gym sessions are never cardio. On a planned strength day they are offered in
+  // the strength block (Confirm only acknowledges: no ticks, no numbers, no
+  // activity). On any other day, or a skip day, they go under Recorded and
+  // Confirm writes a `kind: "strength"` extra that counts for no cardio minutes.
+  const onPlan = info && info.slots && info.slots.strength ? strength : [];
+  if (!(info && info.slots && info.slots.strength)) recorded.push(...strength);
   for (const [slot, w] of Object.entries(planned)) {
     const block = blocksFor(program, slot)[info.slots[slot]];
     const taskId = block && block.cardio && block.cardio.durationTaskId;
@@ -220,7 +227,20 @@ function splitMatches(date, info, workouts, program, overrides) {
     if (task && task.type === "number" && Number(w.duration_minutes) > 0) bySlot[slot] = { workout: w, taskId };
     else recorded.push(w);
   }
-  return { planned: bySlot, recorded };
+  return { planned: bySlot, recorded, strengthOnPlan: onPlan };
+}
+
+const recordedLabel = (w) => (isStrengthWorkout(w) ? "Strength \u00b7 not cardio" : "Recorded, not planned");
+
+/** The offer(s) for a recorded gym session on a planned strength day. Confirm only acknowledges it. */
+function StrengthOffers({ workouts, program, color, onAck }) {
+  return workouts.map((w) => (
+    <div key={`${w.vendor}:${w.vendor_session_id}`} className="mt-2">
+      <WorkoutOffer label={`Recorded strength session${w.vendor ? ` \u00b7 ${w.vendor}` : ""}`}
+                    text={workoutSummary(w, program)} color={color}
+                    onConfirm={() => onAck(w)} onDismiss={() => onAck(w)} />
+    </div>
+  ));
 }
 
 /** Confirm / Dismiss for one wearable workout. */
@@ -1605,6 +1625,10 @@ function AppInner({ setThemeId }) {
                             className="mt-2.5 w-full text-xs font-semibold py-2 rounded-lg border flex items-center justify-center gap-1.5">
                       <Dumbbell size={13} /> Open in Train <ChevronRight size={13} />
                     </button>
+                    {section.key === "strength" && (
+                      <StrengthOffers workouts={dayMatches.strengthOnPlan} program={viewedProgram} color={cat.color}
+                                      onAck={(w) => dismissWorkout(viewedDate, w)} />
+                    )}
                   </div>
                 </div>
               );
@@ -1678,6 +1702,13 @@ function AppInner({ setThemeId }) {
                       </div>
                     );
                   })()}
+
+                {section.key === "strength" && dayMatches.strengthOnPlan.length > 0 && (
+                  <div style={{ borderLeftColor: cat.color }} className="border-l-4 px-4 pb-3 -mt-1">
+                    <StrengthOffers workouts={dayMatches.strengthOnPlan} program={viewedProgram} color={cat.color}
+                                    onAck={(w) => dismissWorkout(viewedDate, w)} />
+                  </div>
+                )}
 
                 {hasTasks && isOpen && (
                   <div style={{ borderColor: BORDER }} className="border-t">
@@ -2073,7 +2104,7 @@ function AppInner({ setThemeId }) {
                 </p>
                 <div className="space-y-2 mt-2">
                   {dayMatches.recorded.map((w) => (
-                    <WorkoutOffer key={`${w.vendor}:${w.vendor_session_id}`} label="Recorded, not planned"
+                    <WorkoutOffer key={`${w.vendor}:${w.vendor_session_id}`} label={recordedLabel(w)}
                                   text={workoutSummary(w, viewedProgram)} color={CATS.activity.color}
                                   onConfirm={() => confirmExtraWorkout(viewedDate, w, viewedProgram)}
                                   onDismiss={() => dismissWorkout(viewedDate, w)} />
@@ -2570,6 +2601,11 @@ function CalendarView(p) {
                   ))}
                 </div>
               )}
+
+              {slotName === "strength" && selMatches.strengthOnPlan.length > 0 && (
+                <StrengthOffers workouts={selMatches.strengthOnPlan} program={selProgram} color={meta.color}
+                                onAck={(w) => p.dismissWorkout(p.calSelected, w)} />
+              )}
             </div>
           );
         })}
@@ -2631,7 +2667,7 @@ function CalendarView(p) {
                 );
               })}
               {selMatches.recorded.map((w) => (
-                <WorkoutOffer key={`${w.vendor}:${w.vendor_session_id}`} label="Recorded, not planned"
+                <WorkoutOffer key={`${w.vendor}:${w.vendor_session_id}`} label={recordedLabel(w)}
                               text={workoutSummary(w, selProgram)} color={CATS.activity.color}
                               onConfirm={() => p.confirmExtraWorkout(p.calSelected, w, selProgram)}
                               onDismiss={() => p.dismissWorkout(p.calSelected, w)} />

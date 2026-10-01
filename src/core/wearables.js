@@ -96,7 +96,7 @@ export async function loadWearables(userId) {
         .order("day", { ascending: false }),
       c
         .from("wearable_workouts")
-        .select("user_id, vendor, day, sport, source, started_at, duration_minutes, distance_km, hr_avg, hr_max")
+        .select("user_id, vendor, day, sport, source, started_at, duration_minutes, distance_km, hr_avg, hr_max, vendor_session_id")
         .eq("user_id", userId)
         .gte("day", sinceKey)
         .order("started_at", { ascending: false }),

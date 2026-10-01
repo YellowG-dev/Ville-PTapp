@@ -49,9 +49,12 @@ export function skipLabel(reason) {
  * means "the user moved or cleared this", which is why hasOwnProperty is used
  * rather than a truthiness check — clearing a session must beat the template.
  *
- * A skip clears every scheduled slot and every extra activity. It does NOT
- * erase what was there: `scheduled` still reports it, so unsetting the skip
- * restores the day exactly.
+ * A skip clears every scheduled slot but NOT extra activities: extras logged on
+ * a sick/travel/injured day still show and still count toward the weekly
+ * cardio total (decided 1 Oct 2026). A skip day with extras is still not a
+ * training day — `isTrainingDay` is computed from slots only when `skip` is
+ * set. Nothing is erased: `scheduled` still reports the cleared slots, so
+ * unsetting the skip restores the day exactly.
  */
 export function resolveSchedule(date, weekOverride, overrides, programOrFn) {
   // `programOrFn` may be a resolver: (date) -> program. A day must be scored
@@ -87,7 +90,7 @@ export function resolveSchedule(date, weekOverride, overrides, programOrFn) {
   }
 
   const allActivities = Array.isArray(ov.activities) ? ov.activities : [];
-  const activities = skip ? [] : allActivities;
+  const activities = allActivities;
   const note = ov.note !== undefined ? ov.note : base.note || null;
 
   return {
@@ -102,7 +105,9 @@ export function resolveSchedule(date, weekOverride, overrides, programOrFn) {
     activities,
     allActivities,
     anyMoved: Object.values(moved).some(Boolean) || allActivities.length > 0 || Boolean(skip),
-    isTrainingDay: Object.values(slots).some(Boolean) || activities.length > 0,
+    isTrainingDay: skip
+      ? Object.values(slots).some(Boolean)
+      : Object.values(slots).some(Boolean) || activities.length > 0,
   };
 }
 
@@ -269,8 +274,8 @@ export function buildSections(date, opts, programOrFn) {
   const opt = { gentler: isGentler, hrMax: hrMax };
 
   if (info.skip) {
-    const cleared =
-      program.slots.filter((s) => info.scheduled[s]).length + info.allActivities.length;
+    // Extras are no longer cleared by a skip, so only scheduled slots count.
+    const cleared = program.slots.filter((s) => info.scheduled[s]).length;
     sections.push({
       key: "skip",
       cat: "rest",

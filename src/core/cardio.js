@@ -36,6 +36,16 @@ export function isRealSession(w) {
   return true;
 }
 
+// Gym sessions are recorded by both vendors as sport "strengthTraining". They
+// are real workouts the client may acknowledge, but they are not cardio: they
+// never reach `planned` or `extras`, and a confirmed one never adds to the
+// weekly cardio minutes (decided 1 Oct 2026).
+export const STRENGTH_SPORTS = ["strengthTraining"];
+
+export function isStrengthWorkout(w) {
+  return Boolean(w) && STRENGTH_SPORTS.includes(w.sport);
+}
+
 /** Workouts a client actually chose to do — the autodetected noise filtered out. */
 export function recordedWorkouts(workouts) {
   return (workouts || []).filter(isRealSession);
@@ -90,15 +100,15 @@ export function dedupe(workouts) {
 /* -------------------------------- matching ---------------------------------- */
 
 /**
- * One day's wearable workouts, sorted into a match for a planned slot or an
- * extra, with anything the client has already dismissed or confirmed removed.
+ * One day's wearable workouts, sorted into a match for a planned cardio slot,
+ * an extra, or `strength` (gym sessions, never cardio), with anything the client has already dismissed or confirmed removed.
  *
  * `info` is a resolveSchedule() result for `date` — the caller already has
  * one for most callers, and computing it again here would risk it disagreeing
  * with what the screen shows. Sport -> slot goes through `cardioTypes[].slot`;
  * a sport with no matching type, or whose type has no `slot`, is extras-only.
  *
- * @returns {{ planned: Record<string, object>, extras: object[] }}
+ * @returns {{ planned: Record<string, object>, extras: object[], strength: object[] }}
  */
 export function matchDay(date, info, workouts, program, overrides) {
   const dayKey = dateKey(date);
@@ -119,14 +129,16 @@ export function matchDay(date, info, workouts, program, overrides) {
 
   const planned = {};
   const extras = [];
+  const strength = [];
   for (const w of dedupe(recordedWorkouts(workouts)).filter((w) => w.day === dayKey)) {
     const key = `${w.vendor}:${w.vendor_session_id}`;
     if (dismissed.has(key) || confirmed.has(key)) continue;
+    if (isStrengthWorkout(w)) { strength.push(w); continue; }
     const slot = slotForSport(w.sport);
     if (slot && scheduled[slot] && !planned[slot]) planned[slot] = w;
     else extras.push(w);
   }
-  return { planned, extras };
+  return { planned, extras, strength };
 }
 
 /* --------------------------------- zones ------------------------------------ */
@@ -154,9 +166,15 @@ export function pace(durationMin, distanceKm) {
 
 /* ------------------------------ weekly total --------------------------------- */
 
+/** False for a strength extra; true for everything else, including legacy `{ id, name }` entries. */
+export function isCardioActivity(a) {
+  return Boolean(a) && a.kind !== "strength";
+}
+
 /**
  * Confirmed cardio minutes for the 7 days starting `weekStart`: planned
- * cardio sessions' logged duration, plus confirmed extras.
+ * cardio sessions' logged duration, plus confirmed cardio extras. A strength
+ * extra (`kind: "strength"`) is not cardio and adds nothing.
  *
  * A planned block counts only through its OWN declared `cardio.durationTaskId`
  * — never guessed from an id pattern — read from `log[day].numbers`. No task
@@ -190,7 +208,7 @@ export function weeklyCardioMinutes(weekStart, log, overrides, programOrResolver
       ? overrides[dayKey].activities
       : [];
     for (const a of activities) {
-      if (a && typeof a.durationMin === "number") total += a.durationMin;
+      if (isCardioActivity(a) && typeof a.durationMin === "number") total += a.durationMin;
     }
   }
   return total;
@@ -207,16 +225,19 @@ function labelFromSport(sport) {
 /**
  * The activities[] entry written when a client confirms a matched or extra
  * workout. `name` comes from the cardio type's label, falling back to the
- * sport when no type claims it (an "Other" match).
+ * sport when no type claims it (an "Other" match). A strength workout is
+ * tagged `kind: "strength"` so it never counts as cardio.
  */
 export function activityFromWorkout(workout, program) {
   const cardioTypes = Array.isArray(program && program.cardioTypes) ? program.cardioTypes : [];
-  const type = cardioTypes.find((ct) => Array.isArray(ct.sports) && ct.sports.includes(workout.sport));
+  const strength = isStrengthWorkout(workout);
+  const type = strength ? null : cardioTypes.find((ct) => Array.isArray(ct.sports) && ct.sports.includes(workout.sport));
   const entry = {
     id: `${workout.vendor}:${workout.vendor_session_id}`,
-    name: type ? type.label : labelFromSport(workout.sport),
+    name: strength ? "Strength training" : type ? type.label : labelFromSport(workout.sport),
     typeId: type ? type.id : null,
     source: "wearable",
+    ...(strength ? { kind: "strength" } : {}),
     workout: { vendor: workout.vendor, vendorSessionId: workout.vendor_session_id },
   };
   if (workout.duration_minutes != null) entry.durationMin = Number(workout.duration_minutes);

@@ -44,6 +44,9 @@ import {
   queueSettings, flushNow, watchConnectivity,
 } from "./core/sync.js";
 import {
+  matchDay, activityFromWorkout, zoneBpm, weeklyCardioMinutes, isStrengthWorkout, isCardioActivity,
+} from "./core/cardio.js";
+import {
   loadWearables, connectUrl, syncVendor, buildRecovery, connectionLabel, fmtSleep, fmtNum,
 } from "./core/wearables.js";
 
@@ -143,6 +146,126 @@ function formatTime(minutes) {
 }
 // ==time-input:end
 
+/* ------------------------------- Cardio UI -------------------------------- */
+// Formatting for cardio targets and recorded workouts, plus the split of a
+// day's wearable matches into "planned and loggable" and "recorded". The
+// matching and zone maths live in core/cardio.js; nothing here stores a pace.
+
+function fmtMin(m) {
+  const n = Math.round(m);
+  return n >= 60 ? `${Math.floor(n / 60)} h ${String(n % 60).padStart(2, "0")} min` : `${n} min`;
+}
+const fmtKm = (k) => `${Math.round(k * 100) / 100} km`;
+
+/** Zone label, with its bpm range when max HR is known. null if the id is unknown. */
+function zoneText(zoneId, hrMax, program) {
+  const z = (Array.isArray(program.hrZones) ? program.hrZones : []).find((zz) => zz.id === zoneId);
+  if (!z) return null;
+  const b = zoneBpm(zoneId, hrMax, program);
+  return b ? `${z.label} (${b.lo}\u2013${b.hi} bpm)` : z.label;
+}
+
+/** The planned target on a block, as short strings. Absent fields are skipped. */
+function cardioTargetParts(c, hrMax, program) {
+  const out = [];
+  if (c.durationMin) out.push(fmtMin(c.durationMin));
+  if (c.distanceKm) out.push(fmtKm(c.distanceKm));
+  const avg = c.zoneAvg && zoneText(c.zoneAvg, hrMax, program);
+  if (avg) out.push(`avg ${avg}`);
+  const mx = c.zoneMax && zoneText(c.zoneMax, hrMax, program);
+  if (mx) out.push(`max ${mx}`);
+  if (c.pace) out.push(`${c.pace} /km`);
+  return out;
+}
+
+/** What a logged extra shows. The zone comes from avg HR and needs a max HR; never guessed. */
+function extraDetail(a, hrMax, program) {
+  const out = [];
+  if (typeof a.durationMin === "number") out.push(fmtMin(a.durationMin));
+  if (typeof a.distanceKm === "number") out.push(fmtKm(a.distanceKm));
+  if (typeof a.hrAvg === "number") out.push(`avg ${Math.round(a.hrAvg)} bpm`);
+  if (typeof a.hrMax === "number") out.push(`max ${Math.round(a.hrMax)} bpm`);
+  if (typeof a.hrAvg === "number" && hrMax) {
+    const pct = (a.hrAvg / hrMax) * 100;
+    const zones = Array.isArray(program.hrZones) ? program.hrZones : [];
+    const z = zones.find((zz) => pct >= zz.pctMin && (pct < zz.pctMax || (zz.pctMax === 100 && pct <= 100)));
+    if (z) out.push(z.label);
+  }
+  if (!isCardioActivity(a)) out.push("not cardio");
+  return out.join(" \u00b7 ");
+}
+
+function workoutSummary(w, program) {
+  const out = [activityFromWorkout(w, program).name];
+  if (w.duration_minutes != null) out.push(fmtMin(Number(w.duration_minutes)));
+  if (w.distance_km != null) out.push(fmtKm(Number(w.distance_km)));
+  if (w.hr_avg != null) out.push(`avg ${Math.round(Number(w.hr_avg))} bpm`);
+  if (w.hr_max != null) out.push(`max ${Math.round(Number(w.hr_max))} bpm`);
+  return out.join(" \u00b7 ");
+}
+
+/**
+ * matchDay() for one date, with each planned match checked for somewhere to
+ * put its minutes: the block must declare a `cardio.durationTaskId` that is a
+ * number task. A planned match with nowhere to go is offered as a recorded
+ * extra instead. Unconfirmed workouts count for nothing either way.
+ */
+function splitMatches(date, info, workouts, program, overrides) {
+  const { planned, extras, strength } = matchDay(date, info, workouts || [], program, overrides);
+  const bySlot = {};
+  const recorded = [...extras];
+  // Gym sessions are never cardio. On a planned strength day they are offered in
+  // the strength block (Confirm only acknowledges: no ticks, no numbers, no
+  // activity). On any other day, or a skip day, they go under Recorded and
+  // Confirm writes a `kind: "strength"` extra that counts for no cardio minutes.
+  const onPlan = info && info.slots && info.slots.strength ? strength : [];
+  if (!(info && info.slots && info.slots.strength)) recorded.push(...strength);
+  for (const [slot, w] of Object.entries(planned)) {
+    const block = blocksFor(program, slot)[info.slots[slot]];
+    const taskId = block && block.cardio && block.cardio.durationTaskId;
+    const task = taskId && (block.exercises || []).find((e) => e.id === taskId);
+    if (task && task.type === "number" && Number(w.duration_minutes) > 0) bySlot[slot] = { workout: w, taskId };
+    else recorded.push(w);
+  }
+  return { planned: bySlot, recorded, strengthOnPlan: onPlan };
+}
+
+const recordedLabel = (w) => (isStrengthWorkout(w) ? "Strength \u00b7 not cardio" : "Recorded, not planned");
+
+/** The offer(s) for a recorded gym session on a planned strength day. Confirm only acknowledges it. */
+function StrengthOffers({ workouts, program, color, onAck }) {
+  return workouts.map((w) => (
+    <div key={`${w.vendor}:${w.vendor_session_id}`} className="mt-2">
+      <WorkoutOffer label={`Recorded strength session${w.vendor ? ` \u00b7 ${w.vendor}` : ""}`}
+                    text={workoutSummary(w, program)} color={color}
+                    confirmLabel="OK" onConfirm={() => onAck(w)} />
+    </div>
+  ));
+}
+
+/**
+ * Confirm / Dismiss for one wearable workout. Without `onDismiss` only the one
+ * button shows — a recorded gym session on a planned strength day has nothing
+ * to choose between, so it gets a single "OK" (decided by John, 1 Oct 2026).
+ */
+function WorkoutOffer({ label, text, confirmLabel, onConfirm, onDismiss, color, dismissLabel }) {
+  const { BG, BORDER, TEXT_MUTED, TEXT_SECONDARY, TEXT_PRIMARY, ON_ACCENT } = useTheme();
+  return (
+    <div style={{ borderColor: BORDER, background: BG }} className="rounded-lg border px-3 py-2">
+      <p style={{ color: TEXT_MUTED }} className="text-[10px] uppercase tracking-wide">{label}</p>
+      <p style={{ color: TEXT_PRIMARY }} className="text-xs font-medium mt-0.5">{text}</p>
+      <div className="flex gap-2 mt-2">
+        <button onClick={onConfirm} style={{ background: color, color: ON_ACCENT }}
+                className="text-[11px] font-semibold px-3 py-1 rounded-lg">{confirmLabel || "Confirm"}</button>
+        {onDismiss && (
+          <button onClick={onDismiss} style={{ color: TEXT_SECONDARY, borderColor: BORDER }}
+                  className="text-[11px] font-semibold px-3 py-1 rounded-lg border">{dismissLabel || "Dismiss"}</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function FontImport() {
   const { BG, CARD, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, ACCENT, ACCENT_2,
           HEAT_RGB, FONT_DISPLAY, FONT_BODY, FONT_MONO, FONT_IMPORT, CATS, OK_COLOR,
@@ -206,7 +329,6 @@ function AppInner({ setThemeId }) {
   const [calMonth, setCalMonth] = useState(today.getMonth());
   const [calSelected, setCalSelected] = useState(today);
   const [editingBlock, setEditingBlock] = useState(null);
-  const [activityDraft, setActivityDraft] = useState("");
   const [moveSource, setMoveSource] = useState(null);
 
   const [backupText, setBackupText] = useState("");
@@ -654,17 +776,66 @@ function AppInner({ setThemeId }) {
     updateSettings({ hrMax: hrMaxDraft.trim() !== "" && !isNaN(n) && n > 0 ? n : null });
   }, [hrMaxDraft, updateSettings]);
 
-  const addActivity = useCallback((d, name) => {
-    const t = name.trim();
+  // `draft`: { name, typeId, durationMin, distanceKm, hrAvg, hrMax }. Every entry
+  // keeps `name` (Coach reads it); the numbers are written only when given.
+  const addActivity = useCallback((d, draft) => {
+    const t = String(draft.name || "").trim();
     if (!t) return;
+    const entry = { id: `${Date.now()}`, name: t, typeId: draft.typeId || null, source: "manual" };
+    for (const f of ["durationMin", "distanceKm", "hrAvg", "hrMax"]) {
+      if (typeof draft[f] === "number") entry[f] = draft[f];
+    }
     const key = dateKey(d);
     writeOverrides((prev) => {
       const day = { ...(prev[key] || {}) };
       const list = Array.isArray(day.activities) ? day.activities : [];
-      day.activities = [...list, { id: `${Date.now()}`, name: t }];
+      day.activities = [...list, entry];
       return { ...prev, [key]: day };
     });
   }, [writeOverrides]);
+
+  // A workout the client has dealt with is remembered as "<vendor>:<session id>"
+  // in overrides[day].dismissedWorkouts, which matchDay() already reads. It
+  // carries a dismissal AND a confirmed planned match (a planned match writes no
+  // activities[] entry, so there is nothing else for matchDay to see).
+  const dismissWorkout = useCallback((d, w) => {
+    const key = dateKey(d);
+    const id = `${w.vendor}:${w.vendor_session_id}`;
+    writeOverrides((prev) => {
+      const day = { ...(prev[key] || {}) };
+      const list = Array.isArray(day.dismissedWorkouts) ? day.dismissedWorkouts : [];
+      if (list.includes(id)) return prev;
+      day.dismissedWorkouts = [...list, id];
+      return { ...prev, [key]: day };
+    });
+  }, [writeOverrides]);
+
+  const confirmExtraWorkout = useCallback((d, w, program) => {
+    const key = dateKey(d);
+    writeOverrides((prev) => {
+      const day = { ...(prev[key] || {}) };
+      const list = Array.isArray(day.activities) ? day.activities : [];
+      day.activities = [...list, activityFromWorkout(w, program)];
+      return { ...prev, [key]: day };
+    });
+  }, [writeOverrides]);
+
+  // Minutes go to the block's declared duration task (never an activities[]
+  // entry, or the weekly total would count the session twice). A duration the
+  // client already typed is theirs: it is kept, and only the key is recorded.
+  const confirmPlannedWorkout = useCallback((d, w, taskId) => {
+    const key = dateKey(d);
+    setLog((prev) => {
+      const base = prev[key] || { done: {} };
+      if (typeof base.numbers?.[taskId] === "number") return prev;
+      const next = { ...prev, [key]: { ...base, numbers: { ...(base.numbers || {}), [taskId]: Number(w.duration_minutes) } } };
+      store.saveJSON("log", next);
+      queueLogDay(key, next[key]);
+      return next;
+    });
+    setLoadDrafts((p) => { const n = { ...p }; delete n[`num:${taskId}`]; return n; });
+    dismissWorkout(d, w);
+  }, [dismissWorkout]);
 
   const removeActivity = useCallback((d, id) => {
     const key = dateKey(d);
@@ -687,6 +858,27 @@ function AppInner({ setThemeId }) {
   );
 
   const countable = useMemo(() => countableTasks(sections), [sections]);
+
+  // Wearable matches for the viewed day, and the weekly cardio line. Signed out
+  // there are no workouts, so both are empty and nothing renders.
+  const viewedProgram = programForDate(viewedDate);
+  const dayMatches = useMemo(
+    () => splitMatches(viewedDate, info, wearables.workouts, viewedProgram, overrides),
+    [viewedDate, info, wearables.workouts, viewedProgram, overrides]
+  );
+  const cardioWeek = useMemo(() => {
+    const hasTarget = (pr) => pr.slots.some((sl) => sl !== "strength" &&
+      Object.values(blocksFor(pr, sl)).some((b) => b && b.cardio && b.cardio.durationTaskId));
+    const monday = new Date(viewedDate);
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+    let any = false;
+    for (let i = 0; i < 7 && !any; i++) {
+      const d = new Date(monday);
+      d.setDate(d.getDate() + i);
+      any = hasTarget(programForDate(d));
+    }
+    return any ? Math.round(weeklyCardioMinutes(monday, log, overrides, programForDate)) : null;
+  }, [viewedDate, log, overrides]);
 
   // Train tab. The same section objects Today renders, filtered - no second
   // definition of a session, so the ring and history cannot disagree with it.
@@ -1389,6 +1581,11 @@ function AppInner({ setThemeId }) {
       {/* ------------------------------- Today -------------------------------- */}
       {(view === "today" || (view === "train" && trainSections.length > 0)) && (
         <div className="px-4 max-w-md mx-auto space-y-3">
+          {view === "today" && cardioWeek !== null && (
+            <p style={{ fontFamily: FONT_MONO, color: TEXT_SECONDARY }} className="text-xs px-1">
+              Cardio this week: {cardioWeek} min
+            </p>
+          )}
           {(view === "train" ? trainSections : sections).map((section) => {
             const inTrain = view === "train";
             const cat = CATS[section.cat] || CATS.check;
@@ -1434,6 +1631,10 @@ function AppInner({ setThemeId }) {
                             className="mt-2.5 w-full text-xs font-semibold py-2 rounded-lg border flex items-center justify-center gap-1.5">
                       <Dumbbell size={13} /> Open in Train <ChevronRight size={13} />
                     </button>
+                    {section.key === "strength" && (
+                      <StrengthOffers workouts={dayMatches.strengthOnPlan} program={viewedProgram} color={cat.color}
+                                      onAck={(w) => dismissWorkout(viewedDate, w)} />
+                    )}
                   </div>
                 </div>
               );
@@ -1467,7 +1668,53 @@ function AppInner({ setThemeId }) {
                   {section.subtitle && (
                     <p style={{ color: TEXT_MUTED }} className="text-[12px] mt-1">{section.subtitle}</p>
                   )}
+                  {(() => {
+                    if (inTrain || !viewedProgram.slots.includes(section.key) || !info.slots[section.key]) return null;
+                    const blk = blocksFor(viewedProgram, section.key)[info.slots[section.key]];
+                    const cardio = blk && blk.cardio;
+                    if (!cardio) return null;
+                    const parts = cardioTargetParts(cardio, settings.hrMax, viewedProgram);
+                    if (!parts.length && !cardio.note) return null;
+                    return (
+                      <div className="mt-1.5">
+                        {parts.length > 0 && (
+                          <p style={{ fontFamily: FONT_MONO, color: TEXT_SECONDARY }} className="text-[11px]">
+                            Target: {parts.join(" \u00b7 ")}
+                          </p>
+                        )}
+                        {cardio.note && <p style={{ color: TEXT_MUTED }} className="text-[11px] mt-0.5">{cardio.note}</p>}
+                      </div>
+                    );
+                  })()}
                 </div>
+
+                  {!inTrain && dayMatches.planned[section.key] && (() => {
+                    const { workout: w, taskId } = dayMatches.planned[section.key];
+                    const mine = rec?.numbers?.[taskId];
+                    const has = typeof mine === "number";
+                    return (
+                      <div style={{ borderLeftColor: cat.color }} className="border-l-4 px-4 pb-3 -mt-1">
+                        <WorkoutOffer label={`Recorded by your watch${w.vendor ? ` \u00b7 ${w.vendor}` : ""}`}
+                                      text={workoutSummary(w, viewedProgram)}
+                                      confirmLabel={has ? "Keep mine" : "Confirm"}
+                                      color={cat.color}
+                                      onConfirm={() => confirmPlannedWorkout(viewedDate, w, taskId)}
+                                      onDismiss={() => dismissWorkout(viewedDate, w)} />
+                        {has && (
+                          <p style={{ color: TEXT_MUTED }} className="text-[10px] mt-1">
+                            You already logged {fmtMin(mine)}. Your entry is kept.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                {section.key === "strength" && dayMatches.strengthOnPlan.length > 0 && (
+                  <div style={{ borderLeftColor: cat.color }} className="border-l-4 px-4 pb-3 -mt-1">
+                    <StrengthOffers workouts={dayMatches.strengthOnPlan} program={viewedProgram} color={cat.color}
+                                    onAck={(w) => dismissWorkout(viewedDate, w)} />
+                  </div>
+                )}
 
                 {hasTasks && isOpen && (
                   <div style={{ borderColor: BORDER }} className="border-t">
@@ -1610,6 +1857,8 @@ function AppInner({ setThemeId }) {
                       }
 
                       const checked = Boolean(rec?.done?.[task.id]);
+                      const actEntry = section.key === "activity" ? info.activities.find((a) => "act-" + a.id === task.id) : null;
+                      const taskPresc = (actEntry && extraDetail(actEntry, settings.hrMax, viewedProgram)) || task.presc;
                       const sub = rec?.subs?.[task.id];
                       const isSub = Boolean(sub?.name);
                       const collapsible = section.cat === "strength" || section.cat === "mobility";
@@ -1630,7 +1879,7 @@ function AppInner({ setThemeId }) {
                                  className="text-sm font-medium truncate">
                                 {isSub ? sub.name : task.name}
                               </p>
-                              {!collapsible && <p style={{ fontFamily: FONT_MONO, color: TEXT_MUTED }} className="text-[11px] mt-0.5">{task.presc}</p>}
+                              {!collapsible && <p style={{ fontFamily: FONT_MONO, color: TEXT_MUTED }} className="text-[11px] mt-0.5">{taskPresc}</p>}
                             </div>
                             {inTrain ? null : collapsible ? (
                               <button onClick={(e) => { e.stopPropagation(); setExpanded((p) => ({ ...p, [task.id]: !open })); }}
@@ -1848,6 +2097,28 @@ function AppInner({ setThemeId }) {
               </div>
             );
           })}
+
+          {view === "today" && dayMatches.recorded.length > 0 && (
+            <div style={{ background: CARD, borderColor: BORDER }} className="rounded-2xl border overflow-hidden">
+              <div style={{ borderLeftColor: CATS.activity.color }} className="border-l-4 px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <Flame size={15} style={{ color: CATS.activity.color }} className="shrink-0" />
+                  <h2 style={{ fontFamily: FONT_DISPLAY }} className="text-sm font-semibold">Recorded</h2>
+                </div>
+                <p style={{ color: TEXT_MUTED }} className="text-[12px] mt-1">
+                  Your watch recorded these. Nothing counts until you confirm it.
+                </p>
+                <div className="space-y-2 mt-2">
+                  {dayMatches.recorded.map((w) => (
+                    <WorkoutOffer key={`${w.vendor}:${w.vendor_session_id}`} label={recordedLabel(w)}
+                                  text={workoutSummary(w, viewedProgram)} color={CATS.activity.color}
+                                  onConfirm={() => confirmExtraWorkout(viewedDate, w, viewedProgram)}
+                                  onDismiss={() => dismissWorkout(viewedDate, w)} />
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1856,7 +2127,8 @@ function AppInner({ setThemeId }) {
         <CalendarView
           {...{ calYear, calMonth, setCalYear, setCalMonth, calSelected, setCalSelected, overrides,
                 todayKey, today, moveSource, setMoveSource, swapBlock, setBlock, resetBlock,
-                editingBlock, setEditingBlock, activityDraft, setActivityDraft, addActivity, removeActivity,
+                editingBlock, setEditingBlock, addActivity, removeActivity, log, workouts: wearables.workouts,
+                hrMax: settings.hrMax, confirmPlannedWorkout, confirmExtraWorkout, dismissWorkout,
                 setSkip, setWeekDeload, programForDate }}
         />
       )}
@@ -2089,6 +2361,30 @@ function CalendarView(p) {
   const block = selInfo.slots.strength ? blocksFor(selProgram, "strength")[selInfo.slots.strength] || null : null;
   const monthLabel = new Date(p.calYear, p.calMonth, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
 
+  // Extra activity form. The type picker is the coach's cardioTypes plus Other;
+  // with none defined it is Other only and the form is the old free-text box
+  // plus the optional numbers.
+  const cardioTypes = Array.isArray(selProgram.cardioTypes) ? selProgram.cardioTypes : [];
+  const emptyExtra = { typeId: "", name: "", dur: "", dist: "", hrAvg: "", hrMax: "" };
+  const [extra, setExtra] = useState(emptyExtra);
+  const setX = (k, v) => setExtra((e) => ({ ...e, [k]: v }));
+  const selType = cardioTypes.find((t) => t.id === extra.typeId) || null;
+  const submitExtra = () => {
+    const name = selType ? selType.label : extra.name;
+    const num = (raw, parse) => { const n = parse(raw); return n !== null && !isNaN(n) && n > 0 ? n : undefined; };
+    p.addActivity(p.calSelected, {
+      name,
+      typeId: selType ? selType.id : null,
+      durationMin: num(extra.dur, parseNumberInput),
+      distanceKm: num(extra.dist, (r) => parseNumberInput(r)),
+      hrAvg: num(extra.hrAvg, (r) => { const n = parseInt(r, 10); return isNaN(n) ? null : n; }),
+      hrMax: num(extra.hrMax, (r) => { const n = parseInt(r, 10); return isNaN(n) ? null : n; }),
+    });
+    setExtra(emptyExtra);
+  };
+  const selMatches = splitMatches(p.calSelected, selInfo, p.workouts, selProgram, p.overrides);
+  const selRec = (p.log || {})[dateKey(p.calSelected)];
+
   const go = (delta) => {
     let m = p.calMonth + delta, y = p.calYear;
     if (m < 0) { m = 11; y -= 1; } else if (m > 11) { m = 0; y += 1; }
@@ -2097,7 +2393,7 @@ function CalendarView(p) {
 
   const pick = (d) => {
     p.setEditingBlock(null);
-    p.setActivityDraft("");
+    setExtra(emptyExtra);
     if (p.moveSource) {
       if (dateKey(p.moveSource.date) !== dateKey(d)) p.swapBlock(p.moveSource.date, d, p.moveSource.slot);
       p.setMoveSource(null);
@@ -2311,6 +2607,11 @@ function CalendarView(p) {
                   ))}
                 </div>
               )}
+
+              {slotName === "strength" && selMatches.strengthOnPlan.length > 0 && (
+                <StrengthOffers workouts={selMatches.strengthOnPlan} program={selProgram} color={meta.color}
+                                onAck={(w) => p.dismissWorkout(p.calSelected, w)} />
+              )}
             </div>
           );
         })}
@@ -2349,6 +2650,38 @@ function CalendarView(p) {
           </div>
         )}
 
+        {(Object.keys(selMatches.planned).length > 0 || selMatches.recorded.length > 0) && (
+          <div style={{ borderColor: BORDER, borderLeftColor: CATS.activity.color }} className="border-t border-l-4 px-4 py-3">
+            <div className="flex items-center gap-2 mb-1">
+              <Flame size={14} style={{ color: CATS.activity.color }} />
+              <p style={{ fontFamily: FONT_DISPLAY }} className="text-xs font-semibold">Recorded</p>
+            </div>
+            <p style={{ color: TEXT_MUTED }} className="text-[11px] mb-2">
+              Your watch recorded these. Nothing counts until you confirm it.
+            </p>
+            <div className="space-y-2">
+              {Object.entries(selMatches.planned).map(([slot, { workout: w, taskId }]) => {
+                const mine = selRec?.numbers?.[taskId];
+                const has = typeof mine === "number";
+                return (
+                  <WorkoutOffer key={`${w.vendor}:${w.vendor_session_id}`}
+                                label={`Matches planned ${blocksFor(selProgram, slot)[selInfo.slots[slot]].label}`}
+                                text={workoutSummary(w, selProgram)} color={CATS.activity.color}
+                                confirmLabel={has ? "Keep mine" : "Confirm"}
+                                onConfirm={() => p.confirmPlannedWorkout(p.calSelected, w, taskId)}
+                                onDismiss={() => p.dismissWorkout(p.calSelected, w)} />
+                );
+              })}
+              {selMatches.recorded.map((w) => (
+                <WorkoutOffer key={`${w.vendor}:${w.vendor_session_id}`} label={recordedLabel(w)}
+                              text={workoutSummary(w, selProgram)} color={CATS.activity.color}
+                              onConfirm={() => p.confirmExtraWorkout(p.calSelected, w, selProgram)}
+                              onDismiss={() => p.dismissWorkout(p.calSelected, w)} />
+              ))}
+            </div>
+          </div>
+        )}
+
         <div style={{ borderColor: BORDER, borderLeftColor: CATS.activity.color }} className="border-t border-l-4 px-4 py-3">
           <div className="flex items-center gap-2 mb-2">
             <Flame size={14} style={{ color: CATS.activity.color }} />
@@ -2356,23 +2689,45 @@ function CalendarView(p) {
           </div>
           {selInfo.activities.length > 0 && (
             <div className="space-y-1.5 mb-2">
-              {selInfo.activities.map((a) => (
-                <div key={a.id} className="flex items-center justify-between gap-2">
-                  <span className="text-xs">{a.name}</span>
-                  <button onClick={() => p.removeActivity(p.calSelected, a.id)} aria-label={`Remove ${a.name}`} style={{ color: TEXT_MUTED }} className="shrink-0 p-1">
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
+              {selInfo.activities.map((a) => {
+                const detail = extraDetail(a, p.hrMax, selProgram);
+                return (
+                  <div key={a.id} className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="text-xs">{a.name}</span>
+                      {detail && <span style={{ fontFamily: FONT_MONO, color: TEXT_MUTED }} className="block text-[11px]">{detail}</span>}
+                    </div>
+                    <button onClick={() => p.removeActivity(p.calSelected, a.id)} aria-label={`Remove ${a.name}`} style={{ color: TEXT_MUTED }} className="shrink-0 p-1">
+                      <X size={12} />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
-          <div className="flex gap-1.5">
-            <input type="text" value={p.activityDraft} onChange={(e) => p.setActivityDraft(e.target.value)}
-                   onKeyDown={(e) => { if (e.key === "Enter") { p.addActivity(p.calSelected, p.activityDraft); p.setActivityDraft(""); } }}
-                   placeholder="e.g. Long walk 45 min"
-                   style={{ borderColor: BORDER, background: BG }} className="flex-1 min-w-0 text-xs px-2.5 py-1.5 rounded-lg border" />
-            <button onClick={() => { p.addActivity(p.calSelected, p.activityDraft); p.setActivityDraft(""); }}
-                    style={{ background: CATS.activity.color, color: ON_ACCENT }} className="shrink-0 text-xs font-semibold px-3 rounded-lg">Add</button>
+          <div className="space-y-1.5">
+            <select value={extra.typeId} onChange={(e) => setX("typeId", e.target.value)} aria-label="Activity type"
+                    style={{ borderColor: BORDER, background: BG, color: TEXT_PRIMARY }}
+                    className="w-full text-xs px-2.5 py-1.5 rounded-lg border">
+              {cardioTypes.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+              <option value="">Other</option>
+            </select>
+            {!selType && (
+              <input type="text" value={extra.name} onChange={(e) => setX("name", e.target.value)}
+                     onKeyDown={(e) => { if (e.key === "Enter") submitExtra(); }}
+                     placeholder="e.g. Long walk"
+                     style={{ borderColor: BORDER, background: BG }} className="w-full text-xs px-2.5 py-1.5 rounded-lg border" />
+            )}
+            <div className="grid grid-cols-4 gap-1.5">
+              {[["dur", "min or m:ss"], ["dist", "km"], ["hrAvg", "avg bpm"], ["hrMax", "max bpm"]].map(([k, ph]) => (
+                <input key={k} type="text" inputMode={k === "dur" ? "text" : "decimal"} value={extra[k]}
+                       onChange={(e) => setX(k, e.target.value)} placeholder={ph} aria-label={ph}
+                       style={{ fontFamily: FONT_MONO, borderColor: BORDER, background: BG, color: TEXT_PRIMARY }}
+                       className="min-w-0 text-xs px-1.5 py-1.5 rounded-lg border" />
+              ))}
+            </div>
+            <button onClick={submitExtra}
+                    style={{ background: CATS.activity.color, color: ON_ACCENT }} className="w-full text-xs font-semibold px-3 py-1.5 rounded-lg">Add</button>
           </div>
         </div>
       </div>

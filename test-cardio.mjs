@@ -15,7 +15,7 @@ import { validate } from "./src/core/program-schema.js";
 import { dateKey } from "./src/core/dates.js";
 import {
   isRealSession, recordedWorkouts, dedupe, matchDay, zoneBpm, pace,
-  weeklyCardioMinutes, activityFromWorkout,
+  weeklyCardioMinutes, activityFromWorkout, isStrengthWorkout, isCardioActivity,
 } from "./src/core/cardio.js";
 
 let pass = 0, fail = 0;
@@ -383,6 +383,88 @@ ok("an unmatched sport falls back to a label derived from the sport", () => {
   const a = activityFromWorkout({ vendor: "oura", vendor_session_id: "s1", sport: "stairExercise", duration_minutes: 12 }, CARDIO_PROGRAM);
   assert.equal(a.typeId, null);
   assert.equal(a.name, "Stair Exercise");
+});
+
+console.log("\nstrength workouts are not cardio");
+
+const GYM = (vendor, id, extra = {}) => ({
+  vendor, vendor_session_id: id, sport: "strengthTraining", source: "workout_heart_rate",
+  day: "2026-09-28", started_at: "2026-09-28T17:00:00Z", duration_minutes: 55, ...extra,
+});
+const STR_INFO = { slots: { run: "easy", strength: "a" } };
+const D28 = new Date(2026, 8, 28);
+
+ok("isStrengthWorkout recognises strengthTraining only", () => {
+  assert.equal(isStrengthWorkout(GYM("oura", "g")), true);
+  assert.equal(isStrengthWorkout(RUN_WORKOUT), false);
+  assert.equal(isStrengthWorkout(null), false);
+});
+
+ok("a strength workout goes to `strength`, never to planned or extras", () => {
+  const r = matchDay(D28, STR_INFO, [GYM("oura", "g1"), RUN_WORKOUT], CARDIO_PROGRAM, {});
+  assert.deepEqual(r.strength.map((w) => w.vendor_session_id), ["g1"]);
+  assert.deepEqual(Object.keys(r.planned), ["run"]);
+  assert.equal(r.extras.length, 0);
+});
+
+ok("a strength workout is `strength` even when a cardio type lists the sport", () => {
+  const prog = { cardioTypes: [{ id: "gym", label: "Gym", sports: ["strengthTraining"], slot: "strength" }] };
+  const r = matchDay(D28, STR_INFO, [GYM("oura", "g1")], prog, {});
+  assert.deepEqual(r.planned, {});
+  assert.equal(r.extras.length, 0);
+  assert.equal(r.strength.length, 1);
+});
+
+ok("Polar beats Oura in a strength duplicate", () => {
+  const r = matchDay(D28, STR_INFO, [GYM("oura", "g1"), GYM("polar", "p1", { source: null })], CARDIO_PROGRAM, {});
+  assert.equal(r.strength.length, 1);
+  assert.equal(r.strength[0].vendor, "polar");
+});
+
+ok("an autodetected Oura strength workout the client never accepted is not offered", () => {
+  const r = matchDay(D28, STR_INFO, [GYM("oura", "g1", { source: "autodetected" })], CARDIO_PROGRAM, {});
+  assert.equal(r.strength.length, 0);
+});
+
+ok("a dismissed strength workout is not re-offered", () => {
+  const r = matchDay(D28, STR_INFO, [GYM("oura", "g1")], CARDIO_PROGRAM, { "2026-09-28": { dismissedWorkouts: ["oura:g1"] } });
+  assert.equal(r.strength.length, 0);
+});
+
+ok("a confirmed strength extra is not re-offered", () => {
+  const act = activityFromWorkout(GYM("oura", "g1"), CARDIO_PROGRAM);
+  const r = matchDay(D28, { slots: {} }, [GYM("oura", "g1")], CARDIO_PROGRAM, { "2026-09-28": { activities: [act] } });
+  assert.equal(r.strength.length, 0);
+});
+
+ok("activityFromWorkout tags a strength workout kind: strength", () => {
+  const a = activityFromWorkout(GYM("oura", "g1"), CARDIO_PROGRAM);
+  assert.equal(a.kind, "strength");
+  assert.equal(a.name, "Strength training");
+  assert.equal(a.typeId, null);
+  assert.equal(a.durationMin, 55);
+  assert.equal(a.source, "wearable");
+});
+
+ok("a cardio workout has no kind", () => {
+  assert.equal("kind" in activityFromWorkout(RUN_WORKOUT, CARDIO_PROGRAM), false);
+});
+
+const WK_PROGRAM = { slots: ["strength"], blocks: { strength: {} }, schedule: { A: {}, B: {} } };
+
+ok("a strength extra adds 0 to the weekly total; a cardio extra the same day still counts", () => {
+  const ov = { "2026-09-28": { activities: [
+    activityFromWorkout(GYM("oura", "g1"), CARDIO_PROGRAM),
+    activityFromWorkout(WALK_WORKOUT, CARDIO_PROGRAM),
+  ] } };
+  assert.equal(weeklyCardioMinutes(new Date(2026, 8, 28), {}, ov, WK_PROGRAM), 20);
+});
+
+ok("isCardioActivity is true for legacy { id, name } entries and cardio, false for strength", () => {
+  assert.equal(isCardioActivity({ id: "1", name: "Walk" }), true);
+  assert.equal(isCardioActivity(activityFromWorkout(WALK_WORKOUT, CARDIO_PROGRAM)), true);
+  assert.equal(isCardioActivity({ id: "2", name: "Gym", kind: "strength", durationMin: 50 }), false);
+  assert.equal(isCardioActivity(null), false);
 });
 
 console.log(`\ntest-cardio: ${pass} passed, ${fail} failed`);

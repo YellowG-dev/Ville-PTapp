@@ -34,7 +34,7 @@
 
 export const PROGRAM_ID = "ville";
 export const CLIENT_NAME = "Ville";
-export const APP_VERSION = "5.5.3-beta1";
+export const APP_VERSION = "5.6.0-beta1";
 
 export const SLOTS = ["strength", "run", "bike", "yoga"];
 

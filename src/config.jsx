@@ -4,6 +4,7 @@
  * between clients lives here and in core/program-ville.js.
  */
 import { THEMES, buildTheme } from "./core/themes.js";
+import { standardCats } from "./core/categories.jsx";
 import React from "react";
 import { Dumbbell, Activity, Bike, Flower2, Wind, Scale, Footprints, Gauge } from "lucide-react";
 import PROGRAM_DATA, {
@@ -38,7 +39,10 @@ export const DEFAULT_THEME_ID = "amber-slate";
 // Categories are CLIENT data, not theme data. One per sport, because cardio
 // is one slot per sport in this app (decided 22 Sep 2026).
 function catsFor({ ACCENT, ACCENT_2 }) {
-  return {
+  // Every entry below wins; standardCats() only fills the categories this client
+  // never defined (a slot added later, such as Walk or Swim), so no existing
+  // colour or icon changes.
+  const own = {
     strength: { label: "Strength", color: ACCENT, Icon: Dumbbell },
     run: { label: "Run", color: ACCENT_2, Icon: Activity },
     bike: { label: "Bike", color: "#6FCF97", Icon: Bike },
@@ -49,6 +53,7 @@ function catsFor({ ACCENT, ACCENT_2 }) {
     activity: { label: "Activity", color: "#9C8CF0", Icon: Footprints },
     testing: { label: "Testing", color: "#5B9BD5", Icon: Gauge },
   };
+  return { ...standardCats({ ACCENT, ACCENT_2 }), ...own };
 }
 
 /** Everything app.jsx needs for one theme, carrying this client's categories. */

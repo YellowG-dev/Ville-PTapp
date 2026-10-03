@@ -13,6 +13,53 @@
 
 export const SCHEMA_VERSION = 2;
 
+/* ------------------------- the standard slot catalogue ---------------------- */
+
+/**
+ * The seven slots every client can have (decided by John, 1 Oct 2026). A
+ * catalogue, not padding: the Coach editor always offers all seven, and a slot
+ * is written into a client's programme only when John adds it.
+ *
+ *   id            the slot id. Existing ids are never renamed — logged history
+ *                 resolves through them.
+ *   label, color  the slotMeta default for a newly added slot.
+ *   countsAsCardio  false for strength and yoga: they are logged but add 0 to
+ *                 the weekly cardio total. Every other slot counts, including a
+ *                 client-specific one such as Juha's tennis.
+ *   sports        the watch-sport codes that belong to the slot by default.
+ *
+ * Colours: strength, cardio, bike and yoga are the values already in the live
+ * programmes; run, walk and swim are new, picked to sit at least ~20 CIE76
+ * apart from every other slot and from the existing Testing and Activity
+ * categories, with dark text legible on each in the dark theme.
+ */
+export const STANDARD_SLOTS = [
+  { id: "strength", label: "Strength", color: "#E3A23C", countsAsCardio: false, sports: ["strengthTraining"] },
+  { id: "run",      label: "Run",      color: "#E8806A", countsAsCardio: true,  sports: ["running"] },
+  { id: "walk",     label: "Walk",     color: "#C9D46B", countsAsCardio: true,  sports: ["walking", "hiking"] },
+  { id: "swim",     label: "Swim",     color: "#2E86DE", countsAsCardio: true,  sports: ["swimming"] },
+  { id: "bike",     label: "Bike",     color: "#6FCF97", countsAsCardio: true,  sports: ["cycling"] },
+  { id: "yoga",     label: "Yoga",     color: "#A99BC9", countsAsCardio: false, sports: ["yoga"] },
+  { id: "cardio",   label: "Cardio",   color: "#4CB6C4", countsAsCardio: true,  sports: ["HIIT", "stairExercise", "elliptical", "cardiovascularExercise"] },
+];
+
+/** The two slots that are logged but are not cardio. */
+export const NON_CARDIO_SLOTS = STANDARD_SLOTS.filter((s) => !s.countsAsCardio).map((s) => s.id);
+
+/**
+ * Sport codes seen in `wearable_workouts` (Polar rows are mapped to the same
+ * codes). An unknown code in a cardio type is a warning, not an error: a new
+ * watch sport must not block publishing.
+ */
+export const KNOWN_SPORTS = [
+  "running", "walking", "hiking", "cycling", "swimming", "yoga", "strengthTraining",
+  "HIIT", "stairExercise", "elliptical", "cardiovascularExercise", "tennis", "paddleSports",
+  "climbing", "golf", "sailing", "stretching", "houseWork", "yardwork", "other",
+];
+
+/** Sports that belong to a non-cardio slot; a cardio type can never list one. */
+const NON_CARDIO_SPORTS = STANDARD_SLOTS.filter((s) => !s.countsAsCardio).flatMap((s) => s.sports);
+
 /* ------------------------------ small helpers ----------------------------- */
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -116,6 +163,11 @@ export function validate(def) {
             t.sports.forEach((s) => {
               if (!sportOwners[s]) sportOwners[s] = [];
               sportOwners[s].push(isStr(t.id) ? t.id : `cardioTypes[${i}]`);
+              if (NON_CARDIO_SPORTS.includes(s)) {
+                E(`cardioTypes[${i}].sports lists "${s}", which is not cardio — strength and yoga are never cardio types`);
+              } else if (!KNOWN_SPORTS.includes(s)) {
+                W(`cardioTypes[${i}].sports lists "${s}", which is not a known watch-sport code — it will only match if a watch reports exactly that`);
+              }
             });
           }
         }
@@ -673,6 +725,15 @@ export function slotOptionsFor(program, slot) {
   const o = program && program.slotOptions && program.slotOptions[slot];
   if (Array.isArray(o) && o.length) return o;
   return [{ value: null, label: "None" }];
+}
+
+/**
+ * Does the slot offer anything to pick? False when its only option is "None" —
+ * a slot the coach has added but not yet given a block. The Calendar leaves such
+ * a slot out of its legend and day panel, except on a day that has a value in it.
+ */
+export function slotHasChoices(program, slot) {
+  return slotOptionsFor(program, slot).some((o) => o && o.value != null);
 }
 
 /** Always returns an object, so blocksFor(p, s)[v] yields undefined, not a throw. */

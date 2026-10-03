@@ -14,6 +14,7 @@ import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { resolveSchedule, buildSections } from "./src/core/engine.js";
 import { matchDay, weeklyCardioMinutes, activityFromWorkout, isCardioActivity } from "./src/core/cardio.js";
+import { slotHasChoices } from "./src/core/program-schema.js";
 
 let pass = 0, fail = 0;
 const ok = (name, fn) => {
@@ -132,48 +133,119 @@ ok("a programme with no cardioTypes offers every recorded workout as an extra", 
   assert.equal(m.extras.length, 1);
 });
 
-console.log("\nstrength workouts (Phase 5b)");
+console.log("\nstrength and yoga workouts (Phase 5b, generalised in Phase 6)");
 
 const gym = (id) => run(id, { sport: "strengthTraining", started_at: `${DAY}T18:00:00Z`, duration_minutes: 55, distance_km: null });
-const STR_PROGRAM = { ...PROGRAM, schedule: { A: { 1: { run: null, strength: "a" } }, B: { 1: { run: null, strength: "a" } } } };
+const yoga = (id) => run(id, { sport: "yoga", started_at: `${DAY}T19:00:00Z`, duration_minutes: 40, distance_km: null });
+const withSchedule = (slotName, value) => ({ ...PROGRAM, slots: [...PROGRAM.slots.filter((x) => x !== slotName), slotName],
+  blocks: { ...PROGRAM.blocks, [slotName]: { [value]: { label: slotName, exercises: [] } } },
+  schedule: { A: { 1: { run: null, [slotName]: value } }, B: { 1: { run: null, [slotName]: value } } } });
+const STR_PROGRAM = withSchedule("strength", "a");
+const YOGA_PROGRAM = withSchedule("yoga", "session");
+const slotsOf = (m) => m.nonCardio.map((n) => `${n.slot}:${n.workout.vendor_session_id}`);
 
-ok("planned strength day: the gym session is in `strength`, never planned or extras", () => {
+// Mirrors splitMatches in app.jsx: a non-cardio workout is offered in its block
+// when the day has that slot scheduled (info.slots, so never on a skip day),
+// otherwise under Recorded.
+const place = (m, info) => {
+  const onPlan = [], recorded = [];
+  for (const { workout, slot } of m.nonCardio) (info.slots[slot] ? onPlan : recorded).push(`${slot}:${workout.vendor_session_id}`);
+  return { onPlan, recorded };
+};
+
+ok("planned strength day: the gym session is in nonCardio (slot strength), never planned or extras", () => {
   const m = matchDay(MON, resolveSchedule(MON, "auto", {}, STR_PROGRAM), [gym("g")], STR_PROGRAM, {});
-  assert.equal(m.strength.length, 1);
+  assert.deepEqual(slotsOf(m), ["strength:g"]);
   assert.deepEqual(m.planned, {});
   assert.deepEqual(m.extras, []);
 });
-ok("planned strength day: acknowledging writes no activity and no number, and is not re-offered", () => {
+ok("planned strength day: OK offered in the block, and acknowledging writes only the key", () => {
+  const info = resolveSchedule(MON, "auto", {}, STR_PROGRAM);
+  assert.deepEqual(place(matchDay(MON, info, [gym("g")], STR_PROGRAM, {}), info), { onPlan: ["strength:g"], recorded: [] });
   const ov = { [DAY]: { dismissedWorkouts: ["polar:g"] } }; // what the UI writes: the key only
   assert.equal(ov[DAY].activities, undefined);
-  const log = {};
-  assert.equal(log[DAY], undefined);
   const m = matchDay(MON, resolveSchedule(MON, "auto", ov, STR_PROGRAM), [gym("g")], STR_PROGRAM, ov);
-  assert.deepEqual(m.strength, []);
-  assert.equal(weeklyCardioMinutes(MON, log, ov, STR_PROGRAM), 0);
+  assert.deepEqual(m.nonCardio, []);
+  assert.equal(weeklyCardioMinutes(MON, {}, ov, STR_PROGRAM), 0);
 });
-ok("non-strength day: the gym session is offered under Recorded as strength; confirm writes one kind:strength activity", () => {
-  const info = resolveSchedule(MON, "auto", {}, PROGRAM); // run day, no strength scheduled
-  const m = matchDay(MON, info, [gym("g")], PROGRAM, {});
-  assert.equal(m.strength.length, 1);
-  const act = activityFromWorkout(m.strength[0], PROGRAM);
+ok("planned yoga day: OK offered in the yoga block, and acknowledging writes only the key", () => {
+  const info = resolveSchedule(MON, "auto", {}, YOGA_PROGRAM);
+  const m = matchDay(MON, info, [yoga("y")], YOGA_PROGRAM, {});
+  assert.deepEqual(slotsOf(m), ["yoga:y"]);
+  assert.deepEqual(place(m, info), { onPlan: ["yoga:y"], recorded: [] });
+  assert.deepEqual(m.planned, {});
+  assert.deepEqual(m.extras, []);
+  const ov = { [DAY]: { dismissedWorkouts: ["polar:y"] } };
+  assert.equal(ov[DAY].activities, undefined);
+  const again = matchDay(MON, resolveSchedule(MON, "auto", ov, YOGA_PROGRAM), [yoga("y")], YOGA_PROGRAM, ov);
+  assert.deepEqual(again.nonCardio, []);
+  assert.equal(weeklyCardioMinutes(MON, {}, ov, YOGA_PROGRAM), 0);
+});
+ok("yoga on a day with no yoga slot: listed under Recorded; confirm writes one kind:yoga activity worth 0 cardio minutes", () => {
+  const info = resolveSchedule(MON, "auto", {}, PROGRAM); // run day, no yoga scheduled
+  const m = matchDay(MON, info, [yoga("y")], PROGRAM, {});
+  assert.deepEqual(place(m, info), { onPlan: [], recorded: ["yoga:y"] });
+  const act = activityFromWorkout(m.nonCardio[0].workout, PROGRAM);
   const ov = { [DAY]: { activities: [act] } };
   assert.equal(ov[DAY].activities.length, 1);
-  assert.equal(act.kind, "strength");
+  assert.equal(act.kind, "yoga");
+  assert.equal(act.name, "Yoga");
   assert.equal(isCardioActivity(act), false);
   assert.equal(weeklyCardioMinutes(MON, {}, ov, PROGRAM), 0);
-  const again = matchDay(MON, resolveSchedule(MON, "auto", ov, PROGRAM), [gym("g")], PROGRAM, ov);
-  assert.deepEqual(again.strength, []);
+  const again = matchDay(MON, resolveSchedule(MON, "auto", ov, PROGRAM), [yoga("y")], PROGRAM, ov);
+  assert.deepEqual(again.nonCardio, []);
 });
-ok("skip day: a gym session is still `strength` (offered under Recorded), never a planned match", () => {
+ok("strength on a day with no strength slot: one kind:strength activity, 0 cardio minutes, not re-offered", () => {
+  const info = resolveSchedule(MON, "auto", {}, PROGRAM);
+  const m = matchDay(MON, info, [gym("g")], PROGRAM, {});
+  assert.deepEqual(place(m, info), { onPlan: [], recorded: ["strength:g"] });
+  const act = activityFromWorkout(m.nonCardio[0].workout, PROGRAM);
+  const ov = { [DAY]: { activities: [act] } };
+  assert.equal(act.kind, "strength");
+  assert.equal(weeklyCardioMinutes(MON, {}, ov, PROGRAM), 0);
+  assert.deepEqual(matchDay(MON, resolveSchedule(MON, "auto", ov, PROGRAM), [gym("g")], PROGRAM, ov).nonCardio, []);
+});
+ok("skip day: a gym or yoga session is under Recorded, never in a block", () => {
   const ov = { [DAY]: { skip: "sick" } };
-  const m = matchDay(MON, resolveSchedule(MON, "auto", ov, STR_PROGRAM), [gym("g")], STR_PROGRAM, ov);
-  assert.equal(m.strength.length, 1);
+  const info = resolveSchedule(MON, "auto", ov, STR_PROGRAM);
+  const m = matchDay(MON, info, [gym("g"), yoga("y")], STR_PROGRAM, ov);
+  assert.deepEqual(place(m, info), { onPlan: [], recorded: ["strength:g", "yoga:y"] });
   assert.deepEqual(m.planned, {});
 });
-ok("a strength extra and a cardio extra on one day: only the cardio minutes count", () => {
-  const ov = { [DAY]: { activities: [activityFromWorkout(gym("g"), PROGRAM), activityFromWorkout(bike("b"), PROGRAM)] } };
+ok("a strength extra, a yoga extra and a cardio extra on one day: only the cardio minutes count", () => {
+  const ov = { [DAY]: { activities: [activityFromWorkout(gym("g"), PROGRAM), activityFromWorkout(yoga("y"), PROGRAM), activityFromWorkout(bike("b"), PROGRAM)] } };
   assert.equal(weeklyCardioMinutes(MON, {}, ov, PROGRAM), 60);
+});
+
+console.log("\nCalendar: a slot with nothing to pick");
+
+const emptySlot = { ...PROGRAM, slots: [...PROGRAM.slots, "walk"], blocks: { ...PROGRAM.blocks, walk: {} },
+  slotOptions: { ...PROGRAM.slotOptions, run: [{ value: null, label: "None" }, { value: "easy", label: "Easy" }], walk: [{ label: "None", value: null }] },
+  slotMeta: { ...PROGRAM.slotMeta, walk: { label: "Walk", color: "#C9D46B" } } };
+// The Calendar's rule (app.jsx): show a slot when it has choices, or on a day where it has a value.
+const shown = (program, info, slot) => slotHasChoices(program, slot) || Boolean(info.scheduled[slot] || info.slots[slot]);
+
+ok("slotHasChoices: false when the only option is None, true once a block is selectable", () => {
+  assert.equal(slotHasChoices(emptySlot, "walk"), false);
+  assert.equal(slotHasChoices(emptySlot, "run"), true);
+  assert.equal(slotHasChoices({ slots: ["x"] }, "x"), false); // no slotOptions at all -> the accessor's default, only None
+  const withBlock = { ...emptySlot, slotOptions: { ...emptySlot.slotOptions, walk: [{ value: null, label: "None" }, { value: "easy", label: "Easy" }] } };
+  assert.equal(slotHasChoices(withBlock, "walk"), true);
+});
+ok("an option-less slot is hidden on an ordinary day", () => {
+  const info = resolveSchedule(MON, "auto", {}, emptySlot);
+  assert.equal(shown(emptySlot, info, "walk"), false);
+  assert.equal(shown(emptySlot, info, "run"), true);
+});
+ok("the same slot is shown on a day that has a value in it, so history stays visible", () => {
+  const ov = { [DAY]: { walk: "easy" } };
+  assert.equal(shown(emptySlot, resolveSchedule(MON, "auto", ov, emptySlot), "walk"), true);
+});
+ok("and on a skip day, where the cleared value is still reported as scheduled", () => {
+  const ov = { [DAY]: { walk: "easy", skip: "sick" } };
+  const info = resolveSchedule(MON, "auto", ov, emptySlot);
+  assert.equal(info.slots.walk, null);
+  assert.equal(shown(emptySlot, info, "walk"), true);
 });
 
 console.log("\nwearable rows carry vendor_session_id");

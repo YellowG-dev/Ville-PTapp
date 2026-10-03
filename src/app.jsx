@@ -16,7 +16,7 @@ import {
 // slotOptionsFor also mean an unknown slot degrades instead of throwing.
 // (MOBILITY was imported here but never used — config.jsx's ProgramView owns it.)
 import {
-  blocksFor, slotMetaFor, slotOptionsFor,
+  blocksFor, slotMetaFor, slotOptionsFor, slotHasChoices, NON_CARDIO_SLOTS,
 } from "./core/program-schema.js";
 // The Program tab rendered from the definition. Preferred whenever the active
 // programme carries a programView; config.jsx's hand-written ProgramView stays
@@ -44,7 +44,7 @@ import {
   queueSettings, flushNow, watchConnectivity,
 } from "./core/sync.js";
 import {
-  matchDay, activityFromWorkout, zoneBpm, weeklyCardioMinutes, isStrengthWorkout, isCardioActivity,
+  matchDay, activityFromWorkout, zoneBpm, weeklyCardioMinutes, isCardioActivity,
 } from "./core/cardio.js";
 import {
   loadWearables, connectUrl, syncVendor, buildRecovery, connectionLabel, fmtSleep, fmtNum,
@@ -211,15 +211,19 @@ function workoutSummary(w, program) {
  * extra instead. Unconfirmed workouts count for nothing either way.
  */
 function splitMatches(date, info, workouts, program, overrides) {
-  const { planned, extras, strength } = matchDay(date, info, workouts || [], program, overrides);
+  const { planned, extras, nonCardio } = matchDay(date, info, workouts || [], program, overrides);
   const bySlot = {};
   const recorded = [...extras];
-  // Gym sessions are never cardio. On a planned strength day they are offered in
-  // the strength block (Confirm only acknowledges: no ticks, no numbers, no
-  // activity). On any other day, or a skip day, they go under Recorded and
-  // Confirm writes a `kind: "strength"` extra that counts for no cardio minutes.
-  const onPlan = info && info.slots && info.slots.strength ? strength : [];
-  if (!(info && info.slots && info.slots.strength)) recorded.push(...strength);
+  // Strength and yoga are logged but are never cardio. When the day has that slot
+  // scheduled (and is not a skip day) the session is offered in that block and
+  // OK only acknowledges it: no ticks, no numbers, no activity. Otherwise it goes
+  // under Recorded and Confirm writes a `kind: <slot>` extra that counts for no
+  // cardio minutes.
+  const nonCardioOnPlan = {};
+  for (const { workout, slot } of nonCardio) {
+    if (info && info.slots && info.slots[slot]) (nonCardioOnPlan[slot] = nonCardioOnPlan[slot] || []).push(workout);
+    else recorded.push(workout);
+  }
   for (const [slot, w] of Object.entries(planned)) {
     const block = blocksFor(program, slot)[info.slots[slot]];
     const taskId = block && block.cardio && block.cardio.durationTaskId;
@@ -227,16 +231,20 @@ function splitMatches(date, info, workouts, program, overrides) {
     if (task && task.type === "number" && Number(w.duration_minutes) > 0) bySlot[slot] = { workout: w, taskId };
     else recorded.push(w);
   }
-  return { planned: bySlot, recorded, strengthOnPlan: onPlan };
+  return { planned: bySlot, recorded, nonCardioOnPlan };
 }
 
-const recordedLabel = (w) => (isStrengthWorkout(w) ? "Strength \u00b7 not cardio" : "Recorded, not planned");
+/** "Yoga · not cardio" for a strength or yoga workout, else the plain recorded label. */
+const recordedLabel = (w, program) => {
+  const act = activityFromWorkout(w, program);
+  return act.kind ? `${act.name} \u00b7 not cardio` : "Recorded, not planned";
+};
 
-/** The offer(s) for a recorded gym session on a planned strength day. Confirm only acknowledges it. */
-function StrengthOffers({ workouts, program, color, onAck }) {
-  return workouts.map((w) => (
+/** The offer(s) for a recorded strength or yoga session on a day that plans one. OK only acknowledges it. */
+function NonCardioOffers({ workouts, program, color, onAck }) {
+  return (workouts || []).map((w) => (
     <div key={`${w.vendor}:${w.vendor_session_id}`} className="mt-2">
-      <WorkoutOffer label={`Recorded strength session${w.vendor ? ` \u00b7 ${w.vendor}` : ""}`}
+      <WorkoutOffer label={`Recorded ${activityFromWorkout(w, program).name.toLowerCase()} session${w.vendor ? ` \u00b7 ${w.vendor}` : ""}`}
                     text={workoutSummary(w, program)} color={color}
                     confirmLabel="OK" onConfirm={() => onAck(w)} />
     </div>
@@ -867,7 +875,7 @@ function AppInner({ setThemeId }) {
     [viewedDate, info, wearables.workouts, viewedProgram, overrides]
   );
   const cardioWeek = useMemo(() => {
-    const hasTarget = (pr) => pr.slots.some((sl) => sl !== "strength" &&
+    const hasTarget = (pr) => pr.slots.some((sl) => !NON_CARDIO_SLOTS.includes(sl) &&
       Object.values(blocksFor(pr, sl)).some((b) => b && b.cardio && b.cardio.durationTaskId));
     const monday = new Date(viewedDate);
     monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
@@ -1631,10 +1639,8 @@ function AppInner({ setThemeId }) {
                             className="mt-2.5 w-full text-xs font-semibold py-2 rounded-lg border flex items-center justify-center gap-1.5">
                       <Dumbbell size={13} /> Open in Train <ChevronRight size={13} />
                     </button>
-                    {section.key === "strength" && (
-                      <StrengthOffers workouts={dayMatches.strengthOnPlan} program={viewedProgram} color={cat.color}
-                                      onAck={(w) => dismissWorkout(viewedDate, w)} />
-                    )}
+                    <NonCardioOffers workouts={dayMatches.nonCardioOnPlan[section.key]} program={viewedProgram} color={cat.color}
+                                     onAck={(w) => dismissWorkout(viewedDate, w)} />
                   </div>
                 </div>
               );
@@ -1709,10 +1715,10 @@ function AppInner({ setThemeId }) {
                     );
                   })()}
 
-                {section.key === "strength" && dayMatches.strengthOnPlan.length > 0 && (
+                {(dayMatches.nonCardioOnPlan[section.key] || []).length > 0 && (
                   <div style={{ borderLeftColor: cat.color }} className="border-l-4 px-4 pb-3 -mt-1">
-                    <StrengthOffers workouts={dayMatches.strengthOnPlan} program={viewedProgram} color={cat.color}
-                                    onAck={(w) => dismissWorkout(viewedDate, w)} />
+                    <NonCardioOffers workouts={dayMatches.nonCardioOnPlan[section.key]} program={viewedProgram} color={cat.color}
+                                     onAck={(w) => dismissWorkout(viewedDate, w)} />
                   </div>
                 )}
 
@@ -2110,7 +2116,7 @@ function AppInner({ setThemeId }) {
                 </p>
                 <div className="space-y-2 mt-2">
                   {dayMatches.recorded.map((w) => (
-                    <WorkoutOffer key={`${w.vendor}:${w.vendor_session_id}`} label={recordedLabel(w)}
+                    <WorkoutOffer key={`${w.vendor}:${w.vendor_session_id}`} label={recordedLabel(w, viewedProgram)}
                                   text={workoutSummary(w, viewedProgram)} color={CATS.activity.color}
                                   onConfirm={() => confirmExtraWorkout(viewedDate, w, viewedProgram)}
                                   onDismiss={() => dismissWorkout(viewedDate, w)} />
@@ -2361,6 +2367,20 @@ function CalendarView(p) {
   const block = selInfo.slots.strength ? blocksFor(selProgram, "strength")[selInfo.slots.strength] || null : null;
   const monthLabel = new Date(p.calYear, p.calMonth, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
 
+  // A slot with nothing to pick (its only option is "None") has no use in the
+  // legend or the day panel, unless a day actually has a session in it - then
+  // it shows, so history stays visible. Slots are added to a programme by the
+  // coach before blocks exist for them.
+  const selectable = slotHasChoices;
+  const slotsInMonth = useMemo(() => {
+    const seen = new Set();
+    for (const week of weeks) for (const d of week) {
+      const info = resolveSchedule(d, "auto", p.overrides, p.programForDate);
+      for (const [slot, v] of Object.entries(info.scheduled)) if (v) seen.add(slot);
+    }
+    return seen;
+  }, [weeks, p.overrides]);
+
   // Extra activity form. The type picker is the coach's cardioTypes plus Other;
   // with none defined it is Other only and the form is the old free-text box
   // plus the optional numbers.
@@ -2499,7 +2519,7 @@ function CalendarView(p) {
       </div>
 
       <div className="flex items-center gap-3 mt-3 flex-wrap">
-        {PROGRAM.slots.map((sl) => (
+        {PROGRAM.slots.filter((sl) => selectable(PROGRAM, sl) || slotsInMonth.has(sl)).map((sl) => (
           <span key={sl} className="flex items-center gap-1.5 text-[11px]" style={{ color: TEXT_SECONDARY }}>
             <span style={{ background: slotMetaFor(PROGRAM, sl).color }} className="w-2 h-2 rounded-full" />{slotMetaFor(PROGRAM, sl).label}
           </span>
@@ -2543,7 +2563,7 @@ function CalendarView(p) {
           )}
         </div>
 
-        {selProgram.slots.map((slotName) => {
+        {selProgram.slots.filter((sl) => selectable(selProgram, sl) || selInfo.scheduled[sl] || selInfo.slots[sl]).map((slotName) => {
           const meta = slotMetaFor(selProgram, slotName);
           const value = selInfo.slots[slotName];
           const blk = value ? blocksFor(selProgram, slotName)[value] || null : null;
@@ -2608,8 +2628,8 @@ function CalendarView(p) {
                 </div>
               )}
 
-              {slotName === "strength" && selMatches.strengthOnPlan.length > 0 && (
-                <StrengthOffers workouts={selMatches.strengthOnPlan} program={selProgram} color={meta.color}
+              {(selMatches.nonCardioOnPlan[slotName] || []).length > 0 && (
+                <NonCardioOffers workouts={selMatches.nonCardioOnPlan[slotName]} program={selProgram} color={meta.color}
                                 onAck={(w) => p.dismissWorkout(p.calSelected, w)} />
               )}
             </div>
@@ -2673,7 +2693,7 @@ function CalendarView(p) {
                 );
               })}
               {selMatches.recorded.map((w) => (
-                <WorkoutOffer key={`${w.vendor}:${w.vendor_session_id}`} label={recordedLabel(w)}
+                <WorkoutOffer key={`${w.vendor}:${w.vendor_session_id}`} label={recordedLabel(w, selProgram)}
                               text={workoutSummary(w, selProgram)} color={CATS.activity.color}
                               onConfirm={() => p.confirmExtraWorkout(p.calSelected, w, selProgram)}
                               onDismiss={() => p.dismissWorkout(p.calSelected, w)} />

@@ -20,6 +20,7 @@
 
 import fs from "fs";
 import { THEMES, THEME_IDS, buildTheme } from "./src/core/themes.js";
+import { STANDARD_SLOTS } from "./src/core/program-schema.js";
 
 const appSrc = fs.readFileSync("./src/app.jsx", "utf8");
 const configSrc = fs.readFileSync("./src/config.jsx", "utf8");
@@ -161,7 +162,8 @@ check("no token sits unbraced in a JSX attribute", [...new Set(bareAttr)].sort()
 // Every component that reads a token must call the hook first. Counting them
 // is what catches a component added later that quietly uses a stale binding.
 const hookCalls = (appSrc.match(/\} = useTheme\(\);/g) || []).length;
-check("six components call useTheme()", hookCalls, 6);
+// Seven since Phase 5 added WorkoutOffer (it reads the theme for its own surface).
+check("seven components call useTheme()", hookCalls, 7);
 const hookIdx = appSrc.indexOf("} = useTheme();");
 const firstUse = appSrc.search(/style=\{\{[^}]*\b(BG|CARD|ACCENT|TEXT_MUTED)\b/);
 ok("the first hook call precedes the first token use", hookIdx > -1 && hookIdx < firstUse);
@@ -230,7 +232,11 @@ console.log("\n--- contrast — asserted unless ACCEPTED (text 4.5:1; toggle kno
 // With a switcher, this client's categories can appear under EVERY theme, so
 // every combination is checked, not just the default. A category written as
 // ACCENT / ACCENT_2 takes the active theme's value; a fixed hex keeps its own.
-const catsBody = (configSrc.match(/function catsFor\(\{ ACCENT, ACCENT_2 \}\) \{\n  return \{([\s\S]*?)\n  \};/) || [])[1] || "";
+// catsFor() holds this client's own entries in `const own = {...}` and spreads
+// standardCats() underneath; the standard categories' fixed colours are checked
+// too, since a slot added later draws in them under every theme.
+const catsBody = (configSrc.match(/function catsFor\(\{ ACCENT, ACCENT_2 \}\) \{[\s\S]*?const own = \{([\s\S]*?)\n  \};/) || [])[1] || "";
+const standardFills = STANDARD_SLOTS.map((s) => s.color);
 ok("category colours were found in config.jsx", /color:/.test(catsBody));
 const tintOn = (rgba, surface) => {
   const [rgb, a] = rgbaParts(rgba);
@@ -241,7 +247,7 @@ THEME_IDS.forEach((id) => {
   const t = THEMES[id];
   const C = hex(t.CARD);
   const fills = [...catsBody.matchAll(/color: (?:"(#[0-9A-Fa-f]{6})"|(ACCENT_2|ACCENT))/g)]
-    .map((m) => m[1] || t[m[2]]);
+    .map((m) => m[1] || t[m[2]]).concat(standardFills);
   const worstFill = fills.reduce(
     (w, f) => { const r = ratio(hex(t.ON_ACCENT), hex(f)); return r < w.r ? { r, f } : w; },
     { r: Infinity, f: null }

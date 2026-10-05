@@ -13,7 +13,7 @@
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { resolveSchedule, buildSections } from "./src/core/engine.js";
-import { matchDay, weeklyCardioMinutes, activityFromWorkout, isCardioActivity } from "./src/core/cardio.js";
+import { matchDay, weeklyCardioMinutes, activityFromWorkout, isCardioActivity, plannedChanged, extrasSubtitle } from "./src/core/cardio.js";
 import { slotHasChoices } from "./src/core/program-schema.js";
 
 let pass = 0, fail = 0;
@@ -259,6 +259,28 @@ ok("loadWearables selects vendor_session_id from wearable_workouts", () => {
 ok("without vendor_session_id the keys would collapse (why the column is needed)", () => {
   const w = run(undefined);
   assert.equal(`${w.vendor}:${w.vendor_session_id}`, "polar:undefined");
+});
+
+console.log("\nstep 9 polish: a confirmed watch extra is not a rearrangement");
+
+ok("watch extra, no slot change: plannedChanged false, activity section says 'From your watch'", () => {
+  const entry = activityFromWorkout(run("w1", { sport: "tennis" }), PROGRAM);
+  const info = resolveSchedule(MON, "auto", { [DAY]: { activities: [entry] } }, PROGRAM);
+  assert.equal(info.activities.length, 1);
+  assert.equal(plannedChanged(info), false);
+  const sec = buildSections(MON, { overrides: { [DAY]: { activities: [entry] } } }, PROGRAM).find((s) => s.key === "activity");
+  assert.ok(sec, "activity section missing");
+  assert.equal(extrasSubtitle(info.activities), "From your watch");
+});
+ok("moving a planned slot on the same day sets plannedChanged", () => {
+  const info = resolveSchedule(MON, "auto", { [DAY]: { slots: { run: null } } }, PROGRAM);
+  assert.equal(plannedChanged(info), Object.values(info.moved).some(Boolean));
+});
+ok("app.jsx uses plannedChanged for the badge and the border, not anyMoved", () => {
+  const src = readFileSync("src/app.jsx", "utf8");
+  assert.ok(!/\.anyMoved/.test(src));
+  assert.ok(/plannedChanged\(info\)/.test(src) && /plannedChanged\(i\)/.test(src));
+  assert.ok(/extrasSubtitle\(info\.activities\)/.test(src));
 });
 
 console.log(`\ntest-cardio-client: ${pass} passed, ${fail} failed`);

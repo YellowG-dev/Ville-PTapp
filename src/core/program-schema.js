@@ -363,6 +363,12 @@ function validateBlockCardio(blk, group, key, slots, hrZoneIds, E, W) {
       const exercises = Array.isArray(blk.exercises) ? blk.exercises : [];
       if (!exercises.some((ex) => isObj(ex) && ex.id === c.durationTaskId)) {
         E(`${at}.durationTaskId "${c.durationTaskId}" is not the id of a task in this block's exercises`);
+      } else {
+        const task = exercises.find((ex) => isObj(ex) && ex.id === c.durationTaskId);
+        const type = task.type || "exercise";
+        if (type !== "number") {
+          E(`${at}.durationTaskId "${c.durationTaskId}" must name a task with type "number" (got "${type}")`);
+        }
       }
     }
   }

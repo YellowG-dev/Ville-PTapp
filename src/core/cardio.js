@@ -56,6 +56,30 @@ export function nonCardioSlotFor(sport) {
   return s ? s.id : null;
 }
 
+/**
+ * Did the day's PLANNED slots change? True when a slot was moved or cleared,
+ * or the day is a skip day. Extras (manual or from the watch) never count —
+ * they add to a day, they do not rearrange it. Drives the "Rearranged" badge
+ * and the Calendar's dashed day border.
+ */
+export function plannedChanged(info) {
+  if (!info) return false;
+  return Object.values(info.moved || {}).some(Boolean) || Boolean(info.skip);
+}
+
+/**
+ * Subtitle for the "Extra Activity" section, by where the extras came from:
+ * all from the watch → "From your watch"; all manual (or legacy entries with
+ * no `source`) → "Added from Calendar"; a mix → "From Calendar and your watch".
+ */
+export function extrasSubtitle(activities) {
+  const list = activities || [];
+  const watch = list.filter((a) => a && a.source === "wearable").length;
+  if (watch === 0) return "Added from Calendar";
+  if (watch === list.length) return "From your watch";
+  return "From Calendar and your watch";
+}
+
 /** Workouts a client actually chose to do — the autodetected noise filtered out. */
 export function recordedWorkouts(workouts) {
   return (workouts || []).filter(isRealSession);

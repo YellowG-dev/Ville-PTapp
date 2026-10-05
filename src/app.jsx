@@ -45,6 +45,7 @@ import {
 } from "./core/sync.js";
 import {
   matchDay, activityFromWorkout, zoneBpm, weeklyCardioMinutes, isCardioActivity,
+  plannedChanged, extrasSubtitle,
 } from "./core/cardio.js";
 import {
   loadWearables, connectUrl, syncVendor, buildRecovery, connectionLabel, fmtSleep, fmtNum,
@@ -1490,7 +1491,7 @@ function AppInner({ setThemeId }) {
                   Gentler week
                 </span>
               )}
-              {info.anyMoved && (
+              {plannedChanged(info) && (
                 <span style={{ background: BADGE.moved.tint, color: BADGE.moved.text, borderColor: BADGE.moved.border }}
                       className="text-[11px] px-2 py-0.5 rounded-full border font-medium">
                   Rearranged
@@ -1631,8 +1632,8 @@ function AppInner({ setThemeId }) {
                         )}
                       </div>
                     </div>
-                    {section.subtitle && (
-                      <p style={{ color: TEXT_MUTED }} className="text-[12px] mt-1">{section.subtitle}</p>
+                    {(section.key === "activity" ? extrasSubtitle(info.activities) : section.subtitle) && (
+                      <p style={{ color: TEXT_MUTED }} className="text-[12px] mt-1">{section.key === "activity" ? extrasSubtitle(info.activities) : section.subtitle}</p>
                     )}
                     <button onClick={() => { setView("train"); window.scrollTo(0, 0); }}
                             style={{ color: cat.color, borderColor: cat.color }}
@@ -1671,8 +1672,8 @@ function AppInner({ setThemeId }) {
                       )}
                     </div>
                   </div>
-                  {section.subtitle && (
-                    <p style={{ color: TEXT_MUTED }} className="text-[12px] mt-1">{section.subtitle}</p>
+                  {(section.key === "activity" ? extrasSubtitle(info.activities) : section.subtitle) && (
+                    <p style={{ color: TEXT_MUTED }} className="text-[12px] mt-1">{section.key === "activity" ? extrasSubtitle(info.activities) : section.subtitle}</p>
                   )}
                   {(() => {
                     if (inTrain || !viewedProgram.slots.includes(section.key) || !info.slots[section.key]) return null;
@@ -2492,7 +2493,7 @@ function CalendarView(p) {
                             style={{ background: isSel ? TINT.selected : i.deload === true ? ACCENT + "14" : CARD,
                                      borderColor: isToday ? ACCENT : BORDER,
                                      borderWidth: isToday ? 2 : 1,
-                                     borderStyle: i.anyMoved ? "dashed" : "solid",
+                                     borderStyle: plannedChanged(i) ? "dashed" : "solid",
                                      opacity: i.skip ? 0.55 : 1 }}
                             className="aspect-square rounded-lg border flex flex-col items-center justify-center gap-0.5">
                       <span style={{ fontFamily: FONT_MONO, color: inMonth ? TEXT_PRIMARY : TEXT_MUTED }} className="text-xs">{d.getDate()}</span>

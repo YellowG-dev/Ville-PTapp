@@ -16,6 +16,7 @@ import { dateKey } from "./src/core/dates.js";
 import {
   isRealSession, recordedWorkouts, dedupe, matchDay, zoneBpm, pace,
   weeklyCardioMinutes, activityFromWorkout, isStrengthWorkout, isCardioActivity, nonCardioSlotFor,
+  plannedChanged, extrasSubtitle,
 } from "./src/core/cardio.js";
 
 let pass = 0, fail = 0;
@@ -142,6 +143,7 @@ ok("cardioTypes warns when a sport is listed under two types", () => {
 ok("block.cardio accepts a well-formed target", () => {
   const d = clone(BASE);
   d.hrZones = [{ id: "PK1", label: "PK1", pctMin: 60, pctMax: 70 }];
+  d.blocks.run.easy.exercises = [{ id: "run-dur", name: "Run duration", type: "number", unit: "min" }];
   d.blocks.run.easy.cardio = {
     durationMin: 45, distanceKm: 8, zoneAvg: "PK1", zoneMax: "PK1", pace: "5:45",
     note: "Flat route", durationTaskId: "run-dur",
@@ -572,6 +574,56 @@ ok("known sport codes raise no sport warning", () => {
   assert.equal(r.ok, true, r.errors.join("; "));
   assert.equal(r.warnings.filter((w) => /watch-sport/.test(w)).length, 0);
 });
+
+/* ------------------------------ Step 9 polish ------------------------------- */
+
+console.log("\nstep 9 polish: durationTaskId type rule (P3)");
+
+const withTask = (task) => {
+  const d = clone(BASE);
+  d.blocks.run.easy.exercises = [task];
+  d.blocks.run.easy.cardio = { durationTaskId: "run-dur" };
+  return validate(d);
+};
+ok("durationTaskId naming a number task: no error", () => {
+  const r = withTask({ id: "run-dur", name: "Run", type: "number", unit: "min" });
+  assert.equal(r.ok, true, r.errors.join("; "));
+});
+ok("durationTaskId naming an exercise task: error", () => {
+  const r = withTask({ id: "run-dur", name: "Run", type: "exercise" });
+  assert.ok(r.errors.some((e) => /must name a task with type "number" \(got "exercise"\)/.test(e)), r.errors.join("; "));
+});
+ok("durationTaskId naming a task without type counts as exercise: error", () => {
+  const r = withTask({ id: "run-dur", name: "Run" });
+  assert.ok(r.errors.some((e) => /must name a task with type "number" \(got "exercise"\)/.test(e)), r.errors.join("; "));
+});
+ok("durationTaskId naming a missing task: the existing error, not the new one", () => {
+  const d = clone(BASE);
+  d.blocks.run.easy.cardio = { durationTaskId: "nope" };
+  const r = validate(d);
+  assert.ok(r.errors.some((e) => /is not the id of a task/.test(e)));
+  assert.ok(!r.errors.some((e) => /type "number"/.test(e)));
+});
+
+console.log("\nstep 9 polish: plannedChanged (P1)");
+
+ok("plannedChanged: a moved slot → true", () => assert.equal(plannedChanged({ moved: { run: true, strength: false }, skip: null, allActivities: [] }), true));
+ok("plannedChanged: a skip day → true", () => assert.equal(plannedChanged({ moved: {}, skip: "sick" }), true));
+ok("plannedChanged: only manual extras → false", () => assert.equal(plannedChanged({ moved: { run: false }, skip: null, allActivities: [{ id: "1", source: "manual" }] }), false));
+ok("plannedChanged: only a confirmed watch extra → false", () => assert.equal(plannedChanged({ moved: {}, skip: null, allActivities: [{ id: "p:1", source: "wearable" }] }), false));
+ok("plannedChanged: nothing → false", () => {
+  assert.equal(plannedChanged({ moved: {}, skip: null }), false);
+  assert.equal(plannedChanged({}), false);
+  assert.equal(plannedChanged(undefined), false);
+});
+
+console.log("\nstep 9 polish: extrasSubtitle (P2)");
+
+ok("extrasSubtitle: all manual → Added from Calendar", () => assert.equal(extrasSubtitle([{ source: "manual" }, { source: "manual" }]), "Added from Calendar"));
+ok("extrasSubtitle: all wearable → From your watch", () => assert.equal(extrasSubtitle([{ source: "wearable" }, { source: "wearable" }]), "From your watch"));
+ok("extrasSubtitle: mixed → From Calendar and your watch", () => assert.equal(extrasSubtitle([{ source: "manual" }, { source: "wearable" }]), "From Calendar and your watch"));
+ok("extrasSubtitle: legacy entry without source → manual wording", () => assert.equal(extrasSubtitle([{ id: "1", name: "Walk" }]), "Added from Calendar"));
+ok("extrasSubtitle: legacy plus wearable → mixed", () => assert.equal(extrasSubtitle([{ id: "1" }, { source: "wearable" }]), "From Calendar and your watch"));
 
 console.log(`\ntest-cardio: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -45,7 +45,7 @@ import {
 } from "./core/sync.js";
 import {
   matchDay, activityFromWorkout, zoneBpm, weeklyCardioMinutes, isCardioActivity,
-  plannedChanged, extrasSubtitle,
+  plannedChanged, extrasSubtitle, resultWritesFromWorkout,
 } from "./core/cardio.js";
 import {
   loadWearables, connectUrl, syncVendor, buildRecovery, connectionLabel, fmtSleep, fmtNum,
@@ -217,8 +217,9 @@ function splitMatches(date, info, workouts, program, overrides) {
   const recorded = [...extras];
   // Strength and yoga are logged but are never cardio. When the day has that slot
   // scheduled (and is not a skip day) the session is offered in that block and
-  // OK only acknowledges it: no ticks, no numbers, no activity. Otherwise it goes
-  // under Recorded and Confirm writes a `kind: <slot>` extra that counts for no
+  // OK records it ON that block (an activities[] entry with `slot` + `block`:
+  // duration and HR, no tick, no cardio minutes). Otherwise it goes under
+  // Recorded and Confirm writes a `kind: <slot>` extra that counts for no
   // cardio minutes.
   const nonCardioOnPlan = {};
   for (const { workout, slot } of nonCardio) {
@@ -229,7 +230,7 @@ function splitMatches(date, info, workouts, program, overrides) {
     const block = blocksFor(program, slot)[info.slots[slot]];
     const taskId = block && block.cardio && block.cardio.durationTaskId;
     const task = taskId && (block.exercises || []).find((e) => e.id === taskId);
-    if (task && task.type === "number" && Number(w.duration_minutes) > 0) bySlot[slot] = { workout: w, taskId };
+    if (task && task.type === "number" && Number(w.duration_minutes) > 0) bySlot[slot] = { workout: w, taskId, block };
     else recorded.push(w);
   }
   return { planned: bySlot, recorded, nonCardioOnPlan };
@@ -241,7 +242,7 @@ const recordedLabel = (w, program) => {
   return act.kind ? `${act.name} \u00b7 not cardio` : "Recorded, not planned";
 };
 
-/** The offer(s) for a recorded strength or yoga session on a day that plans one. OK only acknowledges it. */
+/** The offer(s) for a recorded strength or yoga session on a day that plans one. OK records it onto the block. */
 function NonCardioOffers({ workouts, program, color, onAck }) {
   return (workouts || []).map((w) => (
     <div key={`${w.vendor}:${w.vendor_session_id}`} className="mt-2">
@@ -250,6 +251,29 @@ function NonCardioOffers({ workouts, program, color, onAck }) {
                     confirmLabel="OK" onConfirm={() => onAck(w)} />
     </div>
   ));
+}
+
+const fmtClock = (m) => `${Math.floor(Math.round(m) / 60)}:${String(Math.round(m) % 60).padStart(2, "0")}`;
+
+/** A recorded wearable session shown inside the planned block it was recorded onto. */
+function SessionLines({ sessions, slot, color }) {
+  const { BG, BORDER, TEXT_MUTED, TEXT_PRIMARY } = useTheme();
+  const mine = (sessions || []).filter((a) => a && a.slot === slot);
+  if (!mine.length) return null;
+  return mine.map((a) => {
+    const vendor = a.workout && a.workout.vendor;
+    const parts = ["Session"];
+    if (typeof a.durationMin === "number") parts.push(fmtClock(a.durationMin));
+    if (typeof a.hrAvg === "number") parts.push(`avg ${Math.round(a.hrAvg)}`);
+    if (typeof a.hrMax === "number") parts.push(`max ${Math.round(a.hrMax)}`);
+    if (vendor) parts.push(vendor.charAt(0).toUpperCase() + vendor.slice(1));
+    return (
+      <div key={a.id} style={{ borderColor: BORDER, background: BG, borderLeftColor: color }} className="rounded-lg border border-l-4 px-3 py-2 mt-2">
+        <p style={{ color: TEXT_PRIMARY }} className="text-xs font-medium">{parts.join(" \u00b7 ")}</p>
+        {a.block && <p style={{ color: TEXT_MUTED }} className="text-[10px] mt-0.5">Recorded by your watch</p>}
+      </div>
+    );
+  });
 }
 
 /**
@@ -388,6 +412,7 @@ function AppInner({ setThemeId }) {
   const [wearBusy, setWearBusy] = useState(null);
   const [wearMsg, setWearMsg] = useState("");
   const wearSyncedRef = useRef(null);
+  const lastWearSyncRef = useRef(0);
 
   useEffect(() => {
     let dead = false;
@@ -407,6 +432,7 @@ function AppInner({ setThemeId }) {
       // Once per signed-in session, not on every re-render.
       if (wearSyncedRef.current === authUser.id) return;
       wearSyncedRef.current = authUser.id;
+      lastWearSyncRef.current = Date.now();
       const connected = first.connections.filter((c) => c.status !== "revoked");
       if (!connected.length) return;
       await Promise.all(connected.map((c) => syncVendor(c.vendor, 14)));
@@ -415,6 +441,31 @@ function AppInner({ setThemeId }) {
       if (!dead && after.ok) setWearables(after);
     })();
     return () => { dead = true; };
+  }, [authUser]);
+
+  // Coming back to the app (a tab left open, a PWA resumed) re-syncs when the
+  // last sync is more than 10 minutes old, so a session finished since launch
+  // appears without a restart. Failure leaves everything as it was.
+  useEffect(() => {
+    if (!authUser) return undefined;
+    let dead = false;
+    const onVisible = async () => {
+      if (document.visibilityState !== "visible") return;
+      if (!wearSyncedRef.current || Date.now() - lastWearSyncRef.current < 10 * 60 * 1000) return;
+      lastWearSyncRef.current = Date.now();
+      try {
+        const cur = await loadWearables(authUser.id);
+        if (dead || !cur.ok) return;
+        const connected = cur.connections.filter((c) => c.status !== "revoked");
+        if (!connected.length) return;
+        await Promise.all(connected.map((c) => syncVendor(c.vendor, 14)));
+        if (dead) return;
+        const after = await loadWearables(authUser.id);
+        if (!dead && after.ok) setWearables(after);
+      } catch (e) { /* the log never depends on a sync */ }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { dead = true; document.removeEventListener("visibilitychange", onVisible); };
   }, [authUser]);
 
   const recovery = useMemo(
@@ -570,8 +621,11 @@ function AppInner({ setThemeId }) {
     });
   }, [viewedKey, gentler]);
 
-  const toggleTask = useCallback((id) => {
-    persist((r) => ({ ...r, done: { ...r.done, [id]: !r.done?.[id] } }));
+  // `now` is the tick as the client sees it. A session task can show ticked
+  // from a logged duration without any done[] entry, so the flip is taken from
+  // what is shown, not from the stored flag.
+  const toggleTask = useCallback((id, now) => {
+    persist((r) => ({ ...r, done: { ...r.done, [id]: now === undefined ? !r.done?.[id] : !now } }));
   }, [persist]);
 
   const markSection = useCallback((ids, value) => {
@@ -819,6 +873,21 @@ function AppInner({ setThemeId }) {
     });
   }, [writeOverrides]);
 
+  // Strength / yoga OK on a planned day: the watch session is kept on the block
+  // being filled in (duration, average and max HR), as an activities[] entry with
+  // `slot` + `block`. It is not an extra, adds no tick, and counts no cardio.
+  const recordSession = useCallback((d, w, slot, block, program) => {
+    const key = dateKey(d);
+    const id = `${w.vendor}:${w.vendor_session_id}`;
+    writeOverrides((prev) => {
+      const day = { ...(prev[key] || {}) };
+      const list = Array.isArray(day.activities) ? day.activities : [];
+      if (list.some((a) => a && a.workout && `${a.workout.vendor}:${a.workout.vendorSessionId}` === id)) return prev;
+      day.activities = [...list, activityFromWorkout(w, program, { slot, block })];
+      return { ...prev, [key]: day };
+    });
+  }, [writeOverrides]);
+
   const confirmExtraWorkout = useCallback((d, w, program) => {
     const key = dateKey(d);
     writeOverrides((prev) => {
@@ -829,20 +898,28 @@ function AppInner({ setThemeId }) {
     });
   }, [writeOverrides]);
 
-  // Minutes go to the block's declared duration task (never an activities[]
-  // entry, or the weekly total would count the session twice). A duration the
-  // client already typed is theirs: it is kept, and only the key is recorded.
-  const confirmPlannedWorkout = useCallback((d, w, taskId) => {
+  // Every result field the block declares and the watch has (duration, distance,
+  // average and max HR) goes to its task (never an activities[] entry, or the
+  // weekly total would count the session twice), and the block's session task is
+  // ticked once. A value the client already typed is theirs: it is kept, field
+  // by field, and only the key is recorded.
+  const confirmPlannedWorkout = useCallback((d, w, block) => {
     const key = dateKey(d);
+    const { numbers: add, sessionTaskId } = resultWritesFromWorkout(block, w, null);
     setLog((prev) => {
       const base = prev[key] || { done: {} };
-      if (typeof base.numbers?.[taskId] === "number") return prev;
-      const next = { ...prev, [key]: { ...base, numbers: { ...(base.numbers || {}), [taskId]: Number(w.duration_minutes) } } };
+      const fresh = {};
+      Object.entries(add).forEach(([id, v]) => { if (typeof base.numbers?.[id] !== "number") fresh[id] = v; });
+      const tick = sessionTaskId && !base.done?.[sessionTaskId];
+      if (!Object.keys(fresh).length && !tick) return prev;
+      const rec = { ...base, numbers: { ...(base.numbers || {}), ...fresh } };
+      if (tick) rec.done = { ...(base.done || {}), [sessionTaskId]: true };
+      const next = { ...prev, [key]: rec };
       store.saveJSON("log", next);
       queueLogDay(key, next[key]);
       return next;
     });
-    setLoadDrafts((p) => { const n = { ...p }; delete n[`num:${taskId}`]; return n; });
+    setLoadDrafts((p) => { const n = { ...p }; Object.keys(add).forEach((id) => delete n[`num:${id}`]); return n; });
     dismissWorkout(d, w);
   }, [dismissWorkout]);
 
@@ -1609,7 +1686,7 @@ function AppInner({ setThemeId }) {
             // Today: strength collapses to a summary. The session itself is
             // logged in Train; ticks and "All" still work here unchanged.
             if (!inTrain && section.cat === "strength") {
-              const sTasks = section.tasks.filter((t) => t.type !== "notes");
+              const sTasks = section.tasks.filter((t) => t.type !== "notes" && !t.resultField);
               const sDone = sTasks.filter((t) => isTaskDone(t, rec)).length;
               return (
                 <div key={section.key} style={{ background: CARD, borderColor: BORDER }}
@@ -1640,8 +1717,9 @@ function AppInner({ setThemeId }) {
                             className="mt-2.5 w-full text-xs font-semibold py-2 rounded-lg border flex items-center justify-center gap-1.5">
                       <Dumbbell size={13} /> Open in Train <ChevronRight size={13} />
                     </button>
+                    <SessionLines sessions={info.sessions} slot={section.key} color={cat.color} />
                     <NonCardioOffers workouts={dayMatches.nonCardioOnPlan[section.key]} program={viewedProgram} color={cat.color}
-                                     onAck={(w) => dismissWorkout(viewedDate, w)} />
+                                     onAck={(w) => recordSession(viewedDate, w, section.key, info.slots[section.key], viewedProgram)} />
                   </div>
                 </div>
               );
@@ -1696,7 +1774,7 @@ function AppInner({ setThemeId }) {
                 </div>
 
                   {!inTrain && dayMatches.planned[section.key] && (() => {
-                    const { workout: w, taskId } = dayMatches.planned[section.key];
+                    const { workout: w, taskId, block } = dayMatches.planned[section.key];
                     const mine = rec?.numbers?.[taskId];
                     const has = typeof mine === "number";
                     return (
@@ -1705,7 +1783,7 @@ function AppInner({ setThemeId }) {
                                       text={workoutSummary(w, viewedProgram)}
                                       confirmLabel={has ? "Keep mine" : "Confirm"}
                                       color={cat.color}
-                                      onConfirm={() => confirmPlannedWorkout(viewedDate, w, taskId)}
+                                      onConfirm={() => confirmPlannedWorkout(viewedDate, w, block)}
                                       onDismiss={() => dismissWorkout(viewedDate, w)} />
                         {has && (
                           <p style={{ color: TEXT_MUTED }} className="text-[10px] mt-1">
@@ -1716,10 +1794,11 @@ function AppInner({ setThemeId }) {
                     );
                   })()}
 
-                {(dayMatches.nonCardioOnPlan[section.key] || []).length > 0 && (
+                {((dayMatches.nonCardioOnPlan[section.key] || []).length > 0 || (info.sessions || []).some((a) => a.slot === section.key)) && (
                   <div style={{ borderLeftColor: cat.color }} className="border-l-4 px-4 pb-3 -mt-1">
+                    <SessionLines sessions={info.sessions} slot={section.key} color={cat.color} />
                     <NonCardioOffers workouts={dayMatches.nonCardioOnPlan[section.key]} program={viewedProgram} color={cat.color}
-                                     onAck={(w) => dismissWorkout(viewedDate, w)} />
+                                     onAck={(w) => recordSession(viewedDate, w, section.key, info.slots[section.key], viewedProgram)} />
                   </div>
                 )}
 
@@ -1863,7 +1942,7 @@ function AppInner({ setThemeId }) {
                         );
                       }
 
-                      const checked = Boolean(rec?.done?.[task.id]);
+                      const checked = task.viaTaskId ? isTaskDone(task, rec) : Boolean(rec?.done?.[task.id]);
                       const actEntry = section.key === "activity" ? info.activities.find((a) => "act-" + a.id === task.id) : null;
                       const taskPresc = (actEntry && extraDetail(actEntry, settings.hrMax, viewedProgram)) || task.presc;
                       const sub = rec?.subs?.[task.id];
@@ -1874,8 +1953,8 @@ function AppInner({ setThemeId }) {
                       return (
                         <div key={task.id} style={border}>
                           <div role="button" tabIndex={0}
-                               onClick={() => toggleTask(task.id)}
-                               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleTask(task.id); } }}
+                               onClick={() => toggleTask(task.id, checked)}
+                               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleTask(task.id, checked); } }}
                                className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none">
                             <span style={{ background: checked || isSub ? cat.color : "transparent", borderColor: checked || isSub ? cat.color : BORDER }}
                                   className="shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center">
@@ -1927,6 +2006,10 @@ function AppInner({ setThemeId }) {
                                     {lastNote && (
                                       <p style={{ background: TINT.soft, color: ACCENT, borderColor: TINT.softBorder }}
                                          className="text-[11px] px-2 py-1 rounded-md border">📌 {lastNote}</p>
+                                    )}
+                                    {rec?.exNotes?.[task.id] && (
+                                      <p style={{ background: TINT.soft, color: ACCENT, borderColor: TINT.softBorder }}
+                                         className="text-[11px] px-2 py-1 rounded-md border">📌 Today: {rec.exNotes[task.id]}</p>
                                     )}
                                     {last && (
                                       <p style={{ color: TEXT_MUTED }} className="text-[11px]">
@@ -2135,7 +2218,7 @@ function AppInner({ setThemeId }) {
           {...{ calYear, calMonth, setCalYear, setCalMonth, calSelected, setCalSelected, overrides,
                 todayKey, today, moveSource, setMoveSource, swapBlock, setBlock, resetBlock,
                 editingBlock, setEditingBlock, addActivity, removeActivity, log, workouts: wearables.workouts,
-                hrMax: settings.hrMax, confirmPlannedWorkout, confirmExtraWorkout, dismissWorkout,
+                hrMax: settings.hrMax, confirmPlannedWorkout, confirmExtraWorkout, dismissWorkout, recordSession,
                 setSkip, setWeekDeload, programForDate }}
         />
       )}
@@ -2629,9 +2712,10 @@ function CalendarView(p) {
                 </div>
               )}
 
+              <SessionLines sessions={selInfo.sessions} slot={slotName} color={meta.color} />
               {(selMatches.nonCardioOnPlan[slotName] || []).length > 0 && (
                 <NonCardioOffers workouts={selMatches.nonCardioOnPlan[slotName]} program={selProgram} color={meta.color}
-                                onAck={(w) => p.dismissWorkout(p.calSelected, w)} />
+                                onAck={(w) => p.recordSession(p.calSelected, w, slotName, selInfo.slots[slotName], selProgram)} />
               )}
             </div>
           );
@@ -2681,7 +2765,7 @@ function CalendarView(p) {
               Your watch recorded these. Nothing counts until you confirm it.
             </p>
             <div className="space-y-2">
-              {Object.entries(selMatches.planned).map(([slot, { workout: w, taskId }]) => {
+              {Object.entries(selMatches.planned).map(([slot, { workout: w, taskId, block }]) => {
                 const mine = selRec?.numbers?.[taskId];
                 const has = typeof mine === "number";
                 return (
@@ -2689,7 +2773,7 @@ function CalendarView(p) {
                                 label={`Matches planned ${blocksFor(selProgram, slot)[selInfo.slots[slot]].label}`}
                                 text={workoutSummary(w, selProgram)} color={CATS.activity.color}
                                 confirmLabel={has ? "Keep mine" : "Confirm"}
-                                onConfirm={() => p.confirmPlannedWorkout(p.calSelected, w, taskId)}
+                                onConfirm={() => p.confirmPlannedWorkout(p.calSelected, w, block)}
                                 onDismiss={() => p.dismissWorkout(p.calSelected, w)} />
                 );
               })}

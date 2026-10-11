@@ -335,7 +335,9 @@ export function validate(def) {
  * A structured target on a planned block: `blocks[slot][key].cardio`.
  * All fields optional. `durationTaskId` names which task in this SAME block's
  * `exercises` logs the minutes actually done — weeklyCardioMinutes reads it
- * from there rather than guessing from an id pattern.
+ * from there rather than guessing from an id pattern. `distanceTaskId`,
+ * `hrAvgTaskId` and `hrMaxTaskId` name the tasks that log distance and heart
+ * rate the same way; all four are result fields, not separate ticks.
  */
 function validateBlockCardio(blk, group, key, slots, hrZoneIds, E, W) {
   const c = blk.cardio;
@@ -356,20 +358,17 @@ function validateBlockCardio(blk, group, key, slots, hrZoneIds, E, W) {
     else if (!hrZoneIds.includes(c[f])) E(`${at}.${f} "${c[f]}" is not an id in hrZones`);
   }
   if (c.note !== undefined && !isStr(c.note)) E(`${at}.note must be a non-empty string when present`);
-  if (c.durationTaskId !== undefined) {
-    if (!isStr(c.durationTaskId)) {
-      E(`${at}.durationTaskId must be a string`);
-    } else {
-      const exercises = Array.isArray(blk.exercises) ? blk.exercises : [];
-      if (!exercises.some((ex) => isObj(ex) && ex.id === c.durationTaskId)) {
-        E(`${at}.durationTaskId "${c.durationTaskId}" is not the id of a task in this block's exercises`);
-      } else {
-        const task = exercises.find((ex) => isObj(ex) && ex.id === c.durationTaskId);
-        const type = task.type || "exercise";
-        if (type !== "number") {
-          E(`${at}.durationTaskId "${c.durationTaskId}" must name a task with type "number" (got "${type}")`);
-        }
-      }
+  // Each names a type:"number" task in this SAME block's exercises. The four are
+  // result fields: logged by hand or filled from a confirmed wearable session.
+  for (const f of ["durationTaskId", "distanceTaskId", "hrAvgTaskId", "hrMaxTaskId"]) {
+    if (c[f] === undefined) continue;
+    if (!isStr(c[f])) { E(`${at}.${f} must be a string`); continue; }
+    const exercises = Array.isArray(blk.exercises) ? blk.exercises : [];
+    const task = exercises.find((ex) => isObj(ex) && ex.id === c[f]);
+    if (!task) {
+      E(`${at}.${f} "${c[f]}" is not the id of a task in this block's exercises`);
+    } else if ((task.type || "exercise") !== "number") {
+      E(`${at}.${f} "${c[f]}" must name a task with type "number" (got "${task.type || "exercise"}")`);
     }
   }
   if (group === "strength") W(`${at} is on a block whose slot is "strength"`);

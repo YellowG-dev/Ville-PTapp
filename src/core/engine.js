@@ -90,7 +90,11 @@ export function resolveSchedule(date, weekOverride, overrides, programOrFn) {
   }
 
   const allActivities = Array.isArray(ov.activities) ? ov.activities : [];
-  const activities = allActivities;
+  // An entry with a `slot` is a wearable session recorded onto a planned block
+  // (a strength or yoga OK): shown inside that block's card, never an extra, so
+  // it makes no "Extra Activity" section and no tick.
+  const activities = allActivities.filter((a) => !(a && a.slot));
+  const sessions = allActivities.filter((a) => a && a.slot);
   const note = ov.note !== undefined ? ov.note : base.note || null;
 
   return {
@@ -103,6 +107,7 @@ export function resolveSchedule(date, weekOverride, overrides, programOrFn) {
     deload,
     skipLabel: skipLabel(skip),
     activities,
+    sessions,
     allActivities,
     anyMoved: Object.values(moved).some(Boolean) || allActivities.length > 0 || Boolean(skip),
     isTrainingDay: skip
@@ -243,6 +248,31 @@ function mapTask(e, opt) {
   };
 }
 
+/** Ids of the tasks a planned block's `cardio.*TaskId` fields name: duration, distance, average and max HR. */
+export const CARDIO_RESULT_KEYS = ["durationTaskId", "distanceTaskId", "hrAvgTaskId", "hrMaxTaskId"];
+
+/**
+ * One tick per planned cardio session. Tasks a block's `cardio.*TaskId` fields
+ * name are RESULT FIELDS: shown and editable, never counted (`resultField`).
+ * The block's session task — the first task that is not a number or notes
+ * field, e.g. `run-long` — is the one countable item. When the block declares
+ * a `durationTaskId` it is also done once a duration is logged (`viaTaskId`),
+ * unless the client has explicitly un-ticked it (`done[id] === false`).
+ * Blocks without a `cardio` declaration are untouched.
+ */
+function markCardioTasks(block, tasks) {
+  const c = block && block.cardio;
+  if (!c || typeof c !== "object") return tasks;
+  const ids = CARDIO_RESULT_KEYS.map((k) => c[k]).filter((v) => typeof v === "string");
+  if (!ids.length) return tasks;
+  const session = tasks.find((t) => t.type !== "number" && t.type !== "notes");
+  return tasks.map((t) => {
+    if (ids.includes(t.id) && t.type === "number") return { ...t, resultField: true };
+    if (session && t === session && typeof c.durationTaskId === "string") return { ...t, viaTaskId: c.durationTaskId };
+    return t;
+  });
+}
+
 /**
  * The day's task list.
  *
@@ -308,7 +338,7 @@ export function buildSections(date, opts, programOrFn) {
       noGym: Boolean(block.noGym),
       title: block.label,
       subtitle: isGentler ? block.gentlerNote || program.gentlerNote : block.subtitle || null,
-      tasks: block.exercises.map((e) => mapTask(e, opt)),
+      tasks: markCardioTasks(block, block.exercises.map((e) => mapTask(e, opt))),
     });
   }
 
@@ -390,6 +420,7 @@ export function isTaskDone(task, rec) {
     case "choice":
       return typeof rec.choices?.[task.id] === "string";
     default:
+      if (task.viaTaskId && rec.done?.[task.id] === undefined && typeof rec.numbers?.[task.viaTaskId] === "number") return true;
       return Boolean(rec.done?.[task.id]) || Boolean(rec.subs?.[task.id]?.name);
   }
 }
@@ -402,9 +433,9 @@ export function targetMet(task, rec) {
   return task.direction === "under" ? v <= task.target : v >= task.target;
 }
 
-/** Tasks that count toward the day's percentage — notes are excluded. */
+/** Tasks that count toward the day's percentage — notes and cardio result fields are excluded. */
 export function countableTasks(sections) {
-  return sections.flatMap((s) => s.tasks).filter((t) => t.type !== "notes");
+  return sections.flatMap((s) => s.tasks).filter((t) => t.type !== "notes" && !t.resultField);
 }
 
 /* ------------------------------- History --------------------------------- */
@@ -442,7 +473,7 @@ export function buildHistoryRows(log, overrides, program) {
         if (!sec.tasks.length) continue;
         if (!byCat[sec.cat]) byCat[sec.cat] = { total: 0, done: 0 };
         for (const task of sec.tasks) {
-          if (task.type === "notes") continue;
+          if (task.type === "notes" || task.resultField) continue;
           byCat[sec.cat].total += 1;
           total += 1;
           if (isTaskDone(task, rec)) {

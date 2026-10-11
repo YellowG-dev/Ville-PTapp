@@ -265,7 +265,7 @@ function labelFromSport(sport) {
  * is tagged `kind: <slot>` and named from the slot catalogue, so it never
  * counts as cardio.
  */
-export function activityFromWorkout(workout, program) {
+export function activityFromWorkout(workout, program, placement) {
   const cardioTypes = Array.isArray(program && program.cardioTypes) ? program.cardioTypes : [];
   const ncSlot = nonCardioSlotFor(workout.sport);
   const type = ncSlot ? null : cardioTypes.find((ct) => Array.isArray(ct.sports) && ct.sports.includes(workout.sport));
@@ -281,5 +281,43 @@ export function activityFromWorkout(workout, program) {
   if (workout.distance_km != null) entry.distanceKm = Number(workout.distance_km);
   if (workout.hr_avg != null) entry.hrAvg = Number(workout.hr_avg);
   if (workout.hr_max != null) entry.hrMax = Number(workout.hr_max);
+  // Recorded onto a planned block (strength / yoga OK): `slot` + `block` mark it as
+  // that block's session line rather than an extra.
+  if (placement && placement.slot) {
+    entry.slot = placement.slot;
+    if (placement.block) entry.block = placement.block;
+  }
   return entry;
+}
+
+/** The task a planned cardio block ticks once per session: its first task that is not a number or notes field. */
+export function sessionTaskIdFor(block) {
+  const t = (block && Array.isArray(block.exercises) ? block.exercises : [])
+    .find((e) => e && (e.type || "exercise") !== "number" && e.type !== "notes");
+  return t ? t.id : null;
+}
+
+/**
+ * What confirming a wearable workout into a planned cardio block writes: every
+ * result field the block declares and the workout has — duration, distance,
+ * average HR, max HR — as `numbers`, plus the session task to tick. A value the
+ * client already typed (`existingNumbers`) is kept, field by field.
+ */
+export function resultWritesFromWorkout(block, workout, existingNumbers) {
+  const c = (block && block.cardio) || {};
+  const have = existingNumbers || {};
+  const map = [
+    ["durationTaskId", workout.duration_minutes, false],
+    ["distanceTaskId", workout.distance_km, false],
+    ["hrAvgTaskId", workout.hr_avg, true],
+    ["hrMaxTaskId", workout.hr_max, true],
+  ];
+  const numbers = {};
+  for (const [key, raw, round] of map) {
+    const id = c[key];
+    if (!id || raw == null || !Number.isFinite(Number(raw)) || !(Number(raw) > 0)) continue;
+    if (typeof have[id] === "number") continue;
+    numbers[id] = round ? Math.round(Number(raw)) : Number(raw);
+  }
+  return { numbers, sessionTaskId: sessionTaskIdFor(block) };
 }

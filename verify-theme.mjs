@@ -163,7 +163,7 @@ check("no token sits unbraced in a JSX attribute", [...new Set(bareAttr)].sort()
 // is what catches a component added later that quietly uses a stale binding.
 const hookCalls = (appSrc.match(/\} = useTheme\(\);/g) || []).length;
 // Seven since Phase 5 added WorkoutOffer (it reads the theme for its own surface).
-check("seven components call useTheme()", hookCalls, 7);
+check("eight components call useTheme()", hookCalls, 8);
 const hookIdx = appSrc.indexOf("} = useTheme();");
 const firstUse = appSrc.search(/style=\{\{[^}]*\b(BG|CARD|ACCENT|TEXT_MUTED)\b/);
 ok("the first hook call precedes the first token use", hookIdx > -1 && hookIdx < firstUse);

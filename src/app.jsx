@@ -30,7 +30,7 @@ import {
   resolveSchedule, buildSections, buildHistoryRows, isTaskDone, countableTasks,
   computeSeries, computeRollingTotal, computeLoadSeries, targetMet,
   suggestDeloadWeek, resolveTesting, SKIP_REASONS, dateKey, daysBetween, getISOWeek,
-  loadKeyFor, labelForLoadKey,
+  loadKeyFor, labelForLoadKey, groupLoadKeysByName,
 } from "./core/engine.js";
 import { THEMES, THEME_IDS } from "./core/themes.js";
 import { variantsFor } from "./core/patterns.js";
@@ -1020,21 +1020,21 @@ function AppInner({ setThemeId }) {
       }
       return id;
     };
-    return [...found]
-      .map((id) => ({ id, name: labelForLoadKey(id, nameFor) }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+    // One entry per movement: the same lift logged under several slot ids or
+    // swaps is merged into a single line (display only, no data moves).
+    return groupLoadKeysByName([...found], nameFor);
   }, [log]);
 
   useEffect(() => {
-    if (!selectedExerciseId && exercisesWithHistory.length) {
+    if (exercisesWithHistory.length && !exercisesWithHistory.some((e) => e.id === selectedExerciseId)) {
       setSelectedExerciseId(exercisesWithHistory[0].id);
     }
   }, [exercisesWithHistory, selectedExerciseId]);
 
-  const loadSeries = useMemo(
-    () => (selectedExerciseId ? computeLoadSeries(log, selectedExerciseId, todayKey).slice(-30) : []),
-    [log, selectedExerciseId, todayKey]
-  );
+  const loadSeries = useMemo(() => {
+    const sel = exercisesWithHistory.find((e) => e.id === selectedExerciseId);
+    return sel ? computeLoadSeries(log, sel.keys, todayKey).slice(-30) : [];
+  }, [log, exercisesWithHistory, selectedExerciseId, todayKey]);
 
   /**
    * Every chart in Progress, built from PROGRAM.tracking. Purely declarative:

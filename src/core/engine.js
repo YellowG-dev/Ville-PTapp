@@ -599,14 +599,20 @@ export function computeRollingTotal(rows, id, options) {
   });
 }
 
-/** Heaviest logged set per session, for the strength progression chart. */
+/**
+ * Heaviest logged set per session, for the strength progression chart.
+ * `exerciseId` may be one load key or an array of keys that are the same
+ * movement (see groupLoadKeysByName); a day logged under more than one of them
+ * counts once, at its heaviest set.
+ */
 export function computeLoadSeries(log, exerciseId, excludeDate) {
+  const ids = Array.isArray(exerciseId) ? exerciseId : [exerciseId];
   return Object.keys(log)
     .sort()
     .filter((dstr) => dstr !== excludeDate)
     .map((dstr) => {
-      const loads = log[dstr]?.loads?.[exerciseId];
-      if (!loads) return null;
+      const loads = ids.flatMap((id) => log[dstr]?.loads?.[id] || []);
+      if (!loads.length) return null;
       const weights = loads.map((e) => (typeof e === "number" ? e : e?.w)).filter((w) => w != null);
       if (!weights.length) return null;
       const parts = dstr.split("-").map(Number);
@@ -661,4 +667,31 @@ export function labelForLoadKey(key, baseNameFor) {
   if (i === -1) return baseNameFor ? baseNameFor(key) : key;
   const slug = key.slice(i + 2).replace(/-/g, " ");
   return slug.charAt(0).toUpperCase() + slug.slice(1);
+}
+
+/**
+ * One Progress-dropdown entry per movement, not per load key. The same lift is
+ * logged under several keys when it sits in more than one block (up-1 and fb-1
+ * are both "Incline dumbbell press") or arrives as a swap
+ * ("press-closegrip-db::overhead-triceps-extension"). Keys whose names match
+ * once slugified are one movement. Display only: no log data moves, and
+ * exercise ids keep their meaning. The label prefers a programme name over a
+ * swap slug, because the programme spelling is the one the lifter knows.
+ * Returns [{ id, name, keys }] sorted by name; `id` is "name:<slug>".
+ */
+export function groupLoadKeysByName(keys, baseNameFor) {
+  const groups = new Map();
+  for (const key of keys) {
+    const name = labelForLoadKey(key, baseNameFor);
+    const id = "name:" + slugify(name);
+    const g = groups.get(id);
+    if (!g) groups.set(id, { id, name, keys: [key], fromSwap: key.includes("::") });
+    else {
+      g.keys.push(key);
+      if (g.fromSwap && !key.includes("::")) { g.name = name; g.fromSwap = false; }
+    }
+  }
+  return [...groups.values()]
+    .map(({ id, name, keys: k }) => ({ id, name, keys: k.sort() }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }

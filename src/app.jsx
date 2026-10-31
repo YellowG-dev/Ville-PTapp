@@ -608,6 +608,28 @@ function AppInner({ setThemeId }) {
     setEditingNote(null);
   }, [viewedKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* ------------------- Save what is typed before backgrounding ----------- */
+  // Every input saves on blur. Switching app or locking the phone does not
+  // blur the focused box, and a browser that then discards the page (Samsung
+  // Internet appears to do this between sets) loses the number that was typed
+  // but not yet saved. Blurring the focused element when the page is hidden
+  // runs that input's own onBlur, so it saves exactly as tapping out would.
+  // Both events: visibilitychange fires on app switch and screen lock,
+  // pagehide on close and reload.
+  useEffect(() => {
+    const saveFocused = () => {
+      const el = document.activeElement;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) el.blur();
+    };
+    const onHidden = () => { if (document.visibilityState === "hidden") saveFocused(); };
+    document.addEventListener("visibilitychange", onHidden);
+    window.addEventListener("pagehide", saveFocused);
+    return () => {
+      document.removeEventListener("visibilitychange", onHidden);
+      window.removeEventListener("pagehide", saveFocused);
+    };
+  }, []);
+
   /* -------------------------------- Writers ------------------------------- */
 
   const persist = useCallback((updater) => {
@@ -2026,20 +2048,28 @@ function AppInner({ setThemeId }) {
                                       {Array.from({ length: count }).map((_, si) => {
                                         const wKey = `${lk}:${si}:w`, rKey = `${lk}:${si}:r`;
                                         const le = last?.entries?.[si];
+                                        // What is already stored for this set today. The inputs fall
+                                        // back to it when no draft exists — the same pattern the
+                                        // number tasks use. Drafts are only seeded when the viewed DAY
+                                        // changes, so before this fallback a cold start (app closed,
+                                        // refreshed, or reloaded by the phone) showed today's logged
+                                        // sets as empty, and tapping through an empty box wrote null
+                                        // over the stored value.
+                                        const se = rec?.loads?.[lk]?.[si];
                                         return (
                                           <div key={si} className="flex flex-col items-center gap-0.5">
                                             <span style={{ color: TEXT_MUTED }} className="text-[9px] uppercase tracking-wide">Set {si + 1}</span>
                                             <div className="flex gap-1">
                                               <input type="text" inputMode="decimal" aria-label={`${task.name} set ${si + 1} kg`}
                                                      placeholder={le?.w != null ? String(le.w) : "kg"}
-                                                     value={loadDrafts[wKey] ?? ""} onClick={(e) => e.stopPropagation()}
+                                                     value={loadDrafts[wKey] ?? (se?.w != null ? String(se.w) : "")} onClick={(e) => e.stopPropagation()}
                                                      onChange={(e) => setLoadDrafts((p) => ({ ...p, [wKey]: e.target.value }))}
                                                      onBlur={(e) => commitLoad(lk, si, "w", e.target.value, count)}
                                                      style={{ fontFamily: FONT_MONO, borderColor: BORDER, background: BG }}
                                                      className="w-11 text-center text-xs px-1 py-1 rounded-md border" />
                                               <input type="text" inputMode="numeric" aria-label={`${task.name} set ${si + 1} reps`}
                                                      placeholder={le?.r != null ? String(le.r) : "reps"}
-                                                     value={loadDrafts[rKey] ?? ""} onClick={(e) => e.stopPropagation()}
+                                                     value={loadDrafts[rKey] ?? (se?.r != null ? String(se.r) : "")} onClick={(e) => e.stopPropagation()}
                                                      onChange={(e) => setLoadDrafts((p) => ({ ...p, [rKey]: e.target.value }))}
                                                      onBlur={(e) => commitLoad(lk, si, "r", e.target.value, count)}
                                                      style={{ fontFamily: FONT_MONO, borderColor: BORDER, background: BG }}

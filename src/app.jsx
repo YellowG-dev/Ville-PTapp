@@ -1879,20 +1879,50 @@ function AppInner({ setThemeId }) {
                                 <p style={{ color: TEXT_MUTED }} className="text-[11px]">{task.presc}</p>
                               </div>
                             </div>
-                            <div className="flex gap-1.5 mt-2 ml-8 flex-wrap">
-                              {task.options.map((opt) => (
-                                <button key={opt.value}
-                                        onClick={() => setChoice(task, picked === opt.value ? null : opt.value)}
-                                        style={{
-                                          background: picked === opt.value ? cat.color : "transparent",
-                                          color: picked === opt.value ? ON_ACCENT : TEXT_SECONDARY,
-                                          borderColor: picked === opt.value ? cat.color : BORDER,
-                                        }}
-                                        className="text-xs font-semibold px-3 py-1.5 rounded-lg border">
-                                  {opt.label}
-                                </button>
-                              ))}
-                            </div>
+                            {/* Options may carry a `video` (a follow-along session to pick from).
+                                Those render one per row with a Watch link that opens the video
+                                WITHOUT picking it — picking is the tick. Options without a video
+                                (Alcohol) render exactly as before. */}
+                            {task.options.some((opt) => opt.video) ? (
+                              <div className="flex flex-col gap-1.5 mt-2 ml-8">
+                                {task.options.map((opt) => (
+                                  <div key={opt.value} className="flex items-center gap-2">
+                                    <button onClick={() => setChoice(task, picked === opt.value ? null : opt.value)}
+                                            style={{
+                                              background: picked === opt.value ? cat.color : "transparent",
+                                              color: picked === opt.value ? ON_ACCENT : TEXT_SECONDARY,
+                                              borderColor: picked === opt.value ? cat.color : BORDER,
+                                            }}
+                                            className="flex-1 min-w-0 text-left text-xs font-semibold px-3 py-1.5 rounded-lg border">
+                                      {opt.label}
+                                    </button>
+                                    {opt.video && (
+                                      <a href={opt.video} target="_blank" rel="noopener noreferrer"
+                                         aria-label={`Watch ${opt.label}`}
+                                         style={{ color: cat.color }}
+                                         className="shrink-0 text-[11px] font-semibold flex items-center gap-1 px-1 py-1.5">
+                                        Watch <ExternalLink size={11} />
+                                      </a>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="flex gap-1.5 mt-2 ml-8 flex-wrap">
+                                {task.options.map((opt) => (
+                                  <button key={opt.value}
+                                          onClick={() => setChoice(task, picked === opt.value ? null : opt.value)}
+                                          style={{
+                                            background: picked === opt.value ? cat.color : "transparent",
+                                            color: picked === opt.value ? ON_ACCENT : TEXT_SECONDARY,
+                                            borderColor: picked === opt.value ? cat.color : BORDER,
+                                          }}
+                                          className="text-xs font-semibold px-3 py-1.5 rounded-lg border">
+                                    {opt.label}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                             {has && !isZero && task.countId && (
                               <div className="flex items-center gap-1.5 mt-2 ml-8">
                                 <span style={{ color: TEXT_MUTED }} className="text-[11px]">

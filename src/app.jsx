@@ -1867,6 +1867,17 @@ function AppInner({ setThemeId }) {
                         const isZero = has && task.zeroOption && picked === task.zeroOption;
                         const countKey = `num:${task.countId}`;
                         const countVal = task.countId ? rec?.numbers?.[task.countId] : null;
+                        // `multi` choices are stored as one comma-joined string in option
+                        // order, so the task stays "done" (a string) for every reader; the
+                        // last option un-picked stores null, which un-ticks it. Single
+                        // choices behave exactly as before.
+                        const sel = task.multi && has ? picked.split(",") : [];
+                        const isOn = (v) => (task.multi ? sel.includes(v) : picked === v);
+                        const pick = (v) => {
+                          if (!task.multi) { setChoice(task, picked === v ? null : v); return; }
+                          const next = task.options.map((o) => o.value).filter((x) => (x === v ? !isOn(x) : isOn(x)));
+                          setChoice(task, next.length ? next.join(",") : null);
+                        };
                         return (
                           <div key={task.id} style={border} className="px-4 py-3">
                             <div className="flex items-center gap-3">
@@ -1887,11 +1898,11 @@ function AppInner({ setThemeId }) {
                               <div className="flex flex-col gap-1.5 mt-2 ml-8">
                                 {task.options.map((opt) => (
                                   <div key={opt.value} className="flex items-center gap-2">
-                                    <button onClick={() => setChoice(task, picked === opt.value ? null : opt.value)}
+                                    <button onClick={() => pick(opt.value)}
                                             style={{
-                                              background: picked === opt.value ? cat.color : "transparent",
-                                              color: picked === opt.value ? ON_ACCENT : TEXT_SECONDARY,
-                                              borderColor: picked === opt.value ? cat.color : BORDER,
+                                              background: isOn(opt.value) ? cat.color : "transparent",
+                                              color: isOn(opt.value) ? ON_ACCENT : TEXT_SECONDARY,
+                                              borderColor: isOn(opt.value) ? cat.color : BORDER,
                                             }}
                                             className="flex-1 min-w-0 text-left text-xs font-semibold px-3 py-1.5 rounded-lg border">
                                       {opt.label}
@@ -1911,11 +1922,11 @@ function AppInner({ setThemeId }) {
                               <div className="flex gap-1.5 mt-2 ml-8 flex-wrap">
                                 {task.options.map((opt) => (
                                   <button key={opt.value}
-                                          onClick={() => setChoice(task, picked === opt.value ? null : opt.value)}
+                                          onClick={() => pick(opt.value)}
                                           style={{
-                                            background: picked === opt.value ? cat.color : "transparent",
-                                            color: picked === opt.value ? ON_ACCENT : TEXT_SECONDARY,
-                                            borderColor: picked === opt.value ? cat.color : BORDER,
+                                            background: isOn(opt.value) ? cat.color : "transparent",
+                                            color: isOn(opt.value) ? ON_ACCENT : TEXT_SECONDARY,
+                                            borderColor: isOn(opt.value) ? cat.color : BORDER,
                                           }}
                                           className="text-xs font-semibold px-3 py-1.5 rounded-lg border">
                                     {opt.label}

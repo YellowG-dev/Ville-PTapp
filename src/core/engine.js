@@ -240,6 +240,10 @@ function mapTask(e, opt) {
     target: e.target != null ? e.target : null,
     direction: e.direction || null,
     options: e.options || null,
+    // A choice task with `multi: true` lets several options be picked. They are
+    // stored as ONE comma-joined string ("nightly,cooldown") so every existing
+    // reader — isTaskDone, history, the coach dashboard — still sees a string.
+    multi: e.multi === true,
     countId: e.countId || null,
     countUnit: e.countUnit || null,
     countLabel: e.countLabel || null,

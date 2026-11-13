@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, createContext, useContext } from "react";
+import { flushSync } from "react-dom";
 import {
   Dumbbell, Wind, Flower2, Check, ExternalLink, ChevronDown, ChevronLeft,
   ChevronRight, Settings2, Flame, CalendarDays, Repeat, X, Heart, Ban,
@@ -353,7 +354,9 @@ function AppInner({ setThemeId }) {
   const [sectionOpen, setSectionOpen] = useState({});
 
   const [loadDrafts, setLoadDrafts] = useState({});
-  const [notesDraft, setNotesDraft] = useState("");
+  // null = the box has not been typed in. It then shows the stored note, and a
+  // blur writes nothing. See commitNotes.
+  const [notesDraft, setNotesDraft] = useState(null);
   const [editingNote, setEditingNote] = useState(null);
   const [exNoteDrafts, setExNoteDrafts] = useState({});
   const [hrMaxDraft, setHrMaxDraft] = useState("");
@@ -595,7 +598,7 @@ function AppInner({ setThemeId }) {
   useEffect(() => {
     if (!didInit.current) { didInit.current = true; return; }
     const r = log[viewedKey];
-    setNotesDraft(r?.notes || "");
+    setNotesDraft(null);
     const drafts = {};
     Object.entries(r?.loads || {}).forEach(([exId, arr]) => {
       (arr || []).forEach((entry, i) => {
@@ -616,10 +619,17 @@ function AppInner({ setThemeId }) {
   // runs that input's own onBlur, so it saves exactly as tapping out would.
   // Both events: visibilitychange fires on app switch and screen lock,
   // pagehide on close and reload.
+  //
+  // flushSync is what makes this work. The write to storage happens inside a
+  // React state update, and React normally runs that a moment later. On a
+  // reload or a discarded page there is no "later", so without flushSync the
+  // blur fired and nothing was written (found 11 Nov 2026).
   useEffect(() => {
     const saveFocused = () => {
       const el = document.activeElement;
-      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) el.blur();
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) {
+        try { flushSync(() => el.blur()); } catch (e) { el.blur(); }
+      }
     };
     const onHidden = () => { if (document.visibilityState === "hidden") saveFocused(); };
     document.addEventListener("visibilitychange", onHidden);
@@ -636,6 +646,8 @@ function AppInner({ setThemeId }) {
     setLog((prev) => {
       const base = prev[viewedKey] || { done: {} };
       const nextRec = updater({ ...base });
+      // An updater returns null for "nothing changed": no write, no upload.
+      if (nextRec === null) return prev;
       const next = { ...prev, [viewedKey]: { ...nextRec, gentler } };
       store.saveJSON("log", next);
       queueLogDay(viewedKey, next[viewedKey]);
@@ -692,14 +704,30 @@ function AppInner({ setThemeId }) {
     });
   }, [persist]);
 
+  // Writes only what was typed, and only if it differs from what is stored.
+  // Before 11 Nov 2026 the box started empty after a reload even when a note
+  // was stored, and tapping in and out of it then saved "empty" over the note.
+  // Now an untouched box (draft null) can never write, and the box shows the
+  // stored note, so clearing a note takes actually deleting its text.
   const commitNotes = useCallback(() => {
+    if (notesDraft === null) return;
+    const t = notesDraft.trim();
     persist((r) => {
+      if ((r.notes || "") === t) return null;
       const next = { ...r };
-      const t = notesDraft.trim();
       if (t) next.notes = t; else delete next.notes;
       return next;
     });
   }, [persist, notesDraft]);
+
+  // A long note is typed over minutes, and blur is the only other save. Save a
+  // second after the last keystroke too, so a crash or a killed app costs at
+  // most that second. The draft stays, so typing is not disturbed.
+  useEffect(() => {
+    if (notesDraft === null) return undefined;
+    const t = setTimeout(commitNotes, 1000);
+    return () => clearTimeout(t);
+  }, [notesDraft, commitNotes]);
 
   // setCount: sets prescribed today (after ramp). When given, the exercise is
   // auto-ticked at the moment its last set gets reps - the transition only, so
@@ -729,6 +757,7 @@ function AppInner({ setThemeId }) {
     persist((r) => {
       const notes = { ...(r.exNotes || {}) };
       const t = (raw || "").trim();
+      if ((notes[exId] || "") === t) return null;
       if (t) notes[exId] = t; else delete notes[exId];
       return { ...r, exNotes: notes };
     });
@@ -1143,16 +1172,28 @@ function AppInner({ setThemeId }) {
     return out;
   }, [log, viewedKey]);
 
+  // The most recent earlier note per exercise, with the day it was written.
+  // Keyed by the exercise's own id, never by the swapped variant, so the note
+  // follows the exercise whichever variant is selected (unlike loads, which
+  // are per variant on purpose).
   const lastExNotes = useMemo(() => {
     const out = {};
     Object.keys(log).sort().forEach((dstr) => {
       if (dstr >= viewedKey) return;
       Object.entries(log[dstr]?.exNotes || {}).forEach(([id, note]) => {
-        if (note) out[id] = note;
+        if (note) out[id] = { note, day: dstr };
       });
     });
     return out;
   }, [log, viewedKey]);
+
+  // "12 Nov" - with the year only when it is not the viewed day's year.
+  const noteDateLabel = (dstr) => {
+    const [y, m, d] = dstr.split("-").map(Number);
+    const opts = { day: "numeric", month: "short" };
+    if (y !== viewedDate.getFullYear()) opts.year = "numeric";
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, opts);
+  };
 
   /* -------------------------------- Backup -------------------------------- */
 
@@ -1997,8 +2038,8 @@ function AppInner({ setThemeId }) {
                         return (
                           <div key={task.id} style={border} className="px-4 py-3">
                             <p className="text-sm font-medium mb-1.5">{task.name}</p>
-                            <textarea value={notesDraft} onChange={(e) => setNotesDraft(e.target.value)}
-                                      onBlur={commitNotes} placeholder={task.presc} rows={2}
+                            <textarea value={notesDraft ?? (rec?.notes || "")} onChange={(e) => setNotesDraft(e.target.value)}
+                                      onBlur={() => { commitNotes(); setNotesDraft(null); }} placeholder={task.presc} rows={2}
                                       style={{ borderColor: BORDER, background: BG }}
                                       className="w-full text-xs p-2 rounded-lg border resize-none" />
                           </div>
@@ -2068,11 +2109,11 @@ function AppInner({ setThemeId }) {
                                   <>
                                     {lastNote && (
                                       <p style={{ background: TINT.soft, color: ACCENT, borderColor: TINT.softBorder }}
-                                         className="text-[11px] px-2 py-1 rounded-md border">📌 {lastNote}</p>
+                                         className="text-[11px] px-2 py-1 rounded-md border">📌 {noteDateLabel(lastNote.day)}: {lastNote.note}</p>
                                     )}
                                     {rec?.exNotes?.[task.id] && (
                                       <p style={{ background: TINT.soft, color: ACCENT, borderColor: TINT.softBorder }}
-                                         className="text-[11px] px-2 py-1 rounded-md border">📌 Today: {rec.exNotes[task.id]}</p>
+                                         className="text-[11px] px-2 py-1 rounded-md border">📌 {viewedKey === todayKey ? "Today" : noteDateLabel(viewedKey)}: {rec.exNotes[task.id]}</p>
                                     )}
                                     {last && (
                                       <p style={{ color: TEXT_MUTED }} className="text-[11px]">

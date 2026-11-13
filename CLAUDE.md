@@ -65,6 +65,7 @@ node verify-program-delivery.mjs     # MUST end "0 failed"
 node test-history-versions.mjs       # MUST end "0 failed" — each day on its own programme
 node test-wearable-scope.mjs         # MUST end "0 failed" — wearable rows belong to one person
 node test-notes.mjs                  # MUST end "0 failed" — typed notes survive a reload
+node test-block-sports.mjs           # MUST end "0 failed" — a planned session names the watch sports that fill it
 npm run build                        # esbuild + tailwind, both, already wired
 ```
 

@@ -55,6 +55,7 @@ export const KNOWN_SPORTS = [
   "running", "walking", "hiking", "cycling", "swimming", "yoga", "strengthTraining",
   "HIIT", "stairExercise", "elliptical", "cardiovascularExercise", "tennis", "paddleSports",
   "climbing", "golf", "sailing", "stretching", "houseWork", "yardwork", "other",
+  "crossCountrySkiing", "nordicWalking",
 ];
 
 /** Sports that belong to a non-cardio slot; a cardio type can never list one. */
@@ -358,6 +359,20 @@ function validateBlockCardio(blk, group, key, slots, hrZoneIds, E, W) {
     else if (!hrZoneIds.includes(c[f])) E(`${at}.${f} "${c[f]}" is not an id in hrZones`);
   }
   if (c.note !== undefined && !isStr(c.note)) E(`${at}.note must be a non-empty string when present`);
+  // `sports`: the watch-sport codes that fill THIS block when it is the one
+  // scheduled (cardio.js matchDay). Optional; absent means "use cardioTypes".
+  // An unknown code is a warning, as in cardioTypes: a new watch sport must not
+  // block publishing. Strength and yoga are never cardio, so never listed.
+  if (c.sports !== undefined) {
+    if (!Array.isArray(c.sports) || !c.sports.every(isStr)) {
+      E(`${at}.sports must be an array of strings`);
+    } else {
+      for (const s of c.sports) {
+        if (NON_CARDIO_SPORTS.includes(s)) E(`${at}.sports lists "${s}", which is not cardio — strength and yoga never fill a cardio block`);
+        else if (!KNOWN_SPORTS.includes(s)) W(`${at}.sports lists "${s}", which is not a known watch-sport code — it will only match if a watch reports exactly that`);
+      }
+    }
+  }
   // Each names a type:"number" task in this SAME block's exercises. The four are
   // result fields: logged by hand or filled from a confirmed wearable session.
   for (const f of ["durationTaskId", "distanceTaskId", "hrAvgTaskId", "hrMaxTaskId"]) {

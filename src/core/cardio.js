@@ -161,6 +161,26 @@ export function matchDay(date, info, workouts, program, overrides) {
   };
   const scheduled = (info && info.slots) || {};
 
+  // A planned block may name the watch sports that fill it:
+  // `blocks[slot][key].cardio.sports` (decided 13 Nov 2026 — Juha's Zone 2 is
+  // "anything long and easy": walk, run, bike, rower; his 4x4 is run, stairs,
+  // bike). The list belongs to the BLOCK scheduled that day, so the same slot
+  // accepts a walk on a Zone 2 day and not on an interval day. A block with a
+  // list is authoritative for its slot: a sport not on it does not fill the
+  // slot through `cardioTypes` either. A block with no list behaves exactly as
+  // before.
+  const blockSports = {};
+  for (const [slot, blockKey] of Object.entries(scheduled)) {
+    if (!blockKey) continue;
+    const blk = blocksFor(program, slot)[blockKey];
+    const list = blk && blk.cardio && blk.cardio.sports;
+    if (Array.isArray(list)) blockSports[slot] = list;
+  }
+  const slotByBlock = (sport) => {
+    const hit = Object.keys(blockSports).find((slot) => blockSports[slot].includes(sport));
+    return hit || null;
+  };
+
   const planned = {};
   const extras = [];
   const nonCardio = [];
@@ -169,8 +189,20 @@ export function matchDay(date, info, workouts, program, overrides) {
     if (dismissed.has(key) || confirmed.has(key)) continue;
     const ncSlot = nonCardioSlotFor(w.sport);
     if (ncSlot) { nonCardio.push({ workout: w, slot: ncSlot }); continue; }
+    const listed = slotByBlock(w.sport);
+    if (listed) {
+      // Several sessions can qualify for a listed block (two walks in a day).
+      // The longest one is the planned session; the others are extras.
+      const cur = planned[listed];
+      if (!cur) planned[listed] = w;
+      else if (blockSports[listed] && Number(w.duration_minutes) > Number(cur.duration_minutes)) {
+        extras.push(cur);
+        planned[listed] = w;
+      } else extras.push(w);
+      continue;
+    }
     const slot = slotForSport(w.sport);
-    if (slot && scheduled[slot] && !planned[slot]) planned[slot] = w;
+    if (slot && !blockSports[slot] && scheduled[slot] && !planned[slot]) planned[slot] = w;
     else extras.push(w);
   }
   return { planned, extras, nonCardio };

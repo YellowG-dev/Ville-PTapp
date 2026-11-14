@@ -31,7 +31,7 @@ import {
   resolveSchedule, buildSections, buildHistoryRows, isTaskDone, countableTasks,
   computeSeries, computeRollingTotal, computeLoadSeries, targetMet,
   suggestDeloadWeek, resolveTesting, SKIP_REASONS, dateKey, daysBetween, getISOWeek,
-  loadKeyFor, labelForLoadKey, groupLoadKeysByName,
+  loadKeyFor, labelForLoadKey, groupLoadKeysByName, stepsAutoTicks,
 } from "./core/engine.js";
 import { THEMES, THEME_IDS } from "./core/themes.js";
 import { variantsFor } from "./core/patterns.js";
@@ -389,6 +389,12 @@ function AppInner({ setThemeId }) {
   const [sharing, setSharing] = useState({ linked: false, enabled: null });
   const [sharingBusy, setSharingBusy] = useState(false);
   const syncedUserRef = useRef(null);
+  // True only once THIS session's pullAndMerge has resolved non-null for the
+  // signed-in user. The steps auto-tick waits for it: pullAndMerge lets a
+  // pending local day win over the cloud copy, so on a fresh device a tick
+  // queued before the merge would replace the client's real cloud day with a
+  // one-tick record. Signed out, or a failed pull, leaves it false all session.
+  const [cloudMerged, setCloudMerged] = useState(false);
 
   // Sharing state follows the session. Signed out, there is nothing to ask
   // about; signed in, this is read once rather than watched, because the only
@@ -519,6 +525,7 @@ function AppInner({ setThemeId }) {
       const uid = user?.id || null;
       if (syncedUserRef.current === uid) return;   // same user, nothing to redo
       syncedUserRef.current = uid;
+      setCloudMerged(false);                       // a new user has not merged yet
 
       await configureSync({ store, userId: uid, onStateChange: setSyncState });
       if (!uid) return;
@@ -541,6 +548,9 @@ function AppInner({ setThemeId }) {
       store.saveJSON("log", merged.log);
       store.saveJSON("overrides", merged.overrides);
       store.saveJSON("settings", merged.settings);
+      // Still the same user? A sign-out or switch during the pull must not
+      // open the gate for whoever is signed in now.
+      if (syncedUserRef.current === uid) setCloudMerged(true);
     };
 
     // Programme delivery. Runs after the log merge because it is the less urgent
@@ -973,6 +983,61 @@ function AppInner({ setThemeId }) {
     setLoadDrafts((p) => { const n = { ...p }; Object.keys(add).forEach((id) => delete n[`num:${id}`]); return n; });
     dismissWorkout(d, w);
   }, [dismissWorkout]);
+
+  // Steps auto-tick (D11). Each day's step count is the signed-in user's OWN
+  // Oura row for that day — never collapseDays, never another vendor (Polar
+  // sends no day rows). No row, or steps null, is "unknown", never 0.
+  const ouraSteps = useMemo(() => {
+    const out = {};
+    const uid = authUser?.id;
+    if (!uid) return out;
+    for (const r of wearables.days || []) {
+      if (r && r.vendor === "oura" && r.user_id === uid && typeof r.steps === "number" && Number.isFinite(r.steps)) {
+        out[r.day] = r.steps;
+      }
+    }
+    return out;
+  }, [wearables.days, authUser]);
+  const hasOura = Boolean(connByVendor.oura && connByVendor.oura.status !== "revoked");
+
+  // Today and the 6 days before: each day built with ITS OWN programme
+  // (programForDate), so a day before the version that carries `auto` is never
+  // touched. Writes like confirmPlannedWorkout. Only after this session's first
+  // successful merge — see cloudMerged.
+  useEffect(() => {
+    if (!cloudMerged || !authUser) return;
+    const ticks = {};
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const key = dateKey(d);
+      if (!(key in ouraSteps)) continue;
+      const dayRec = log[key] || null;
+      const secs = buildSections(
+        d,
+        { weekType: "auto", gentler: Boolean(dayRec?.gentler), overrides, hrMax: settings.hrMax, record: dayRec },
+        programForDate
+      );
+      const ids = stepsAutoTicks(secs, dayRec, ouraSteps[key]);
+      if (ids.length) ticks[key] = ids;
+    }
+    if (!Object.keys(ticks).length) return;
+    setLog((prev) => {
+      let next = prev;
+      for (const [key, ids] of Object.entries(ticks)) {
+        const base = next[key] || { done: {} };
+        // Re-checked against the latest state: a tap since the render wins.
+        const fresh = ids.filter((id) => base.done?.[id] === undefined);
+        if (!fresh.length) continue;
+        const done = { ...(base.done || {}) };
+        fresh.forEach((id) => { done[id] = true; });
+        next = { ...next, [key]: { ...base, done } };
+        queueLogDay(key, next[key]);
+      }
+      if (next !== prev) store.saveJSON("log", next);
+      return next;
+    });
+  }, [cloudMerged, authUser, ouraSteps, log, overrides, settings.hrMax, today]);
 
   const removeActivity = useCallback((d, id) => {
     const key = dateKey(d);
@@ -2048,7 +2113,15 @@ function AppInner({ setThemeId }) {
 
                       const checked = task.viaTaskId ? isTaskDone(task, rec) : Boolean(rec?.done?.[task.id]);
                       const actEntry = section.key === "activity" ? info.activities.find((a) => "act-" + a.id === task.id) : null;
-                      const taskPresc = (actEntry && extraDetail(actEntry, settings.hrMax, viewedProgram)) || task.presc;
+                      const basePresc = (actEntry && extraDetail(actEntry, settings.hrMax, viewedProgram)) || task.presc;
+                      // A steps task shows the day's count beside its target. No
+                      // Oura connection: the presc alone, as before.
+                      const autoSteps = task.auto && task.auto.source === "steps" && hasOura
+                        ? (typeof ouraSteps[viewedKey] === "number"
+                          ? ` · ${Math.round(ouraSteps[viewedKey]).toLocaleString("en-US")} / ${Number(task.auto.min).toLocaleString("en-US")} steps`
+                          : " · steps not synced yet")
+                        : "";
+                      const taskPresc = basePresc ? basePresc + autoSteps : autoSteps.replace(/^ · /, "");
                       const sub = rec?.subs?.[task.id];
                       const isSub = Boolean(sub?.name);
                       const collapsible = section.cat === "strength" || section.cat === "mobility";

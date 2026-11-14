@@ -249,6 +249,9 @@ function mapTask(e, opt) {
     countLabel: e.countLabel || null,
     zeroOption: e.zeroOption || null,
     scale: e.scale || null,
+    // Only a daily task that declares it carries `auto` (see stepsAutoTicks);
+    // every other task maps exactly as before, with no new key.
+    ...(e.auto ? { auto: e.auto } : {}),
   };
 }
 
@@ -435,6 +438,32 @@ export function targetMet(task, rec) {
   const v = rec?.numbers?.[task.id];
   if (typeof v !== "number") return null;
   return task.direction === "under" ? v <= task.target : v >= task.target;
+}
+
+/**
+ * Steps auto-tick (decided 7 Oct 2026, D11). The ids of the tasks in `sections`
+ * — a buildSections() result for one day — that the day's step count ticks:
+ * every task with `auto.source === "steps"` whose `min` is met, and only when
+ * the day's log has never recorded that task (`rec.done[id] === undefined`).
+ *
+ * That last rule is what keeps a manual un-tick: toggleTask writes `false`, so
+ * a task the client un-ticked is never re-ticked, and a `true` is left alone.
+ * The same "transition only" idea as the strength auto-tick. It never returns a
+ * task to un-tick. `steps` that is not a finite number means "unknown", never 0.
+ */
+export function stepsAutoTicks(sections, rec, steps) {
+  if (typeof steps !== "number" || !Number.isFinite(steps)) return [];
+  const out = [];
+  for (const sec of sections || []) {
+    for (const task of (sec && sec.tasks) || []) {
+      const a = task && task.auto;
+      if (!a || a.source !== "steps" || typeof a.min !== "number") continue;
+      if (steps < a.min) continue;
+      if (rec?.done?.[task.id] !== undefined) continue;
+      if (!out.includes(task.id)) out.push(task.id);
+    }
+  }
+  return out;
 }
 
 /** Tasks that count toward the day's percentage — notes and cardio result fields are excluded. */

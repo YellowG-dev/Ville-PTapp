@@ -21,7 +21,7 @@
  * catalogue value is just that colour under the dark theme. ACCENT_2 is
  * accepted so a caller can pass the whole pair, but no standard slot uses it.
  */
-import { Dumbbell, Activity, Footprints, Waves, Bike, Flower2, HeartPulse } from "lucide-react";
+import { Dumbbell, Activity, Footprints, Waves, Bike, Flower2, HeartPulse, MountainSnow } from "lucide-react";
 import { STANDARD_SLOTS } from "./program-schema.js";
 
 const ICONS = {
@@ -32,6 +32,7 @@ const ICONS = {
   bike: Bike,
   yoga: Flower2,
   cardio: HeartPulse,
+  ski: MountainSnow,
 };
 
 export function standardCats({ ACCENT }) {

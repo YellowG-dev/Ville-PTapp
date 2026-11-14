@@ -204,8 +204,11 @@ export function fmtNum(v, digits = 0) {
  * below counts DAYS. Before that, `avg7` averaged seven array entries: with two
  * vendors that is three and a half days, and with a coach's unfiltered query it
  * was roughly two days spread across three different bodies.
+ *
+ * `now` sets only the 30-day session cutoff. Callers leave it out; a test
+ * passes a fixed date so its fixture does not expire as the calendar moves on.
  */
-export function buildRecovery(days, workouts, subjectId = null) {
+export function buildRecovery(days, workouts, subjectId = null, now = new Date()) {
   const rows = collapseDays(days, subjectId);
   if (!rows.length && !(workouts || []).length) return null;
 
@@ -226,7 +229,7 @@ export function buildRecovery(days, workouts, subjectId = null) {
       rhr: r.resting_hr != null ? Number(r.resting_hr) : null,
     }));
 
-  const cutoff = new Date();
+  const cutoff = new Date(now);
   cutoff.setDate(cutoff.getDate() - 30);
   const cutoffKey = cutoff.toISOString().slice(0, 10);
   const recent = (workouts || []).filter(isRealSession).filter((w) => w.day >= cutoffKey);

@@ -63,7 +63,10 @@ const workouts = [
   { vendor: "oura", source: "confirmed", sport: "houseWork", day: "2026-09-23", duration_minutes: 20 },
   { vendor: "oura", source: "workout_heart_rate", sport: "strengthTraining", day: "2026-09-23", duration_minutes: 75 },
 ];
-const r = W.buildRecovery(days, workouts);
+// A fixed "now": the 30-day session cutoff would otherwise move with the
+// calendar and expire this fixture (it did, around 24 Oct 2026).
+const NOW = new Date("2026-09-24T12:00:00");
+const r = W.buildRecovery(days, workouts, null, NOW);
 
 // Today's row exists from midnight with steps only; showing it as last night
 // would read as a night with no sleep.
@@ -75,6 +78,14 @@ check("nights counts nights with sleep", r.nights, 2);
 // sleepless night, which is a different and alarming claim.
 check("missing night stays null", r.series.find((p) => p.day === "2026-09-24").sleepH, null);
 check("no data at all gives nothing to render", W.buildRecovery([], []), null);
+// `now` moves only the 30-day session cutoff. 31 days on, both workouts are out
+// of the window; everything else in the picture is unchanged.
+const later = W.buildRecovery(days, workouts, null, new Date("2026-10-24T12:00:00"));
+check("fixed now: a session 31 days old is outside the window", later.sessions30, 0);
+check("fixed now: the cutoff does not touch the nights", later.latest.day, "2026-09-23");
+check("fixed now: day 30 is still inside the window",
+  W.buildRecovery(days, workouts, null, new Date("2026-10-23T12:00:00")).sessions30, 1);
+check("default now still works (no fourth argument)", typeof W.buildRecovery(days, workouts).sessions30, "number");
 
 /* --- connection labels --------------------------------------------------- */
 check("no connection", W.connectionLabel(null), "not connected");

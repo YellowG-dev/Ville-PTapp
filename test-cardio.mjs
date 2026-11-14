@@ -531,9 +531,9 @@ ok("an existing kind:strength entry written by Phase 5b still adds 0", () => {
 
 console.log("\nslot catalogue");
 
-ok("STANDARD_SLOTS: the seven ids, in order, with unique colours and the agreed cardio flags", () => {
-  assert.deepEqual(STANDARD_SLOTS.map((s) => s.id), ["strength", "run", "walk", "swim", "bike", "yoga", "cardio"]);
-  assert.equal(new Set(STANDARD_SLOTS.map((s) => s.color)).size, 7);
+ok("STANDARD_SLOTS: the eight ids, in order, with unique colours and the agreed cardio flags", () => {
+  assert.deepEqual(STANDARD_SLOTS.map((s) => s.id), ["strength", "run", "walk", "swim", "bike", "yoga", "cardio", "ski"]);
+  assert.equal(new Set(STANDARD_SLOTS.map((s) => s.color)).size, 8);
   assert.ok(STANDARD_SLOTS.every((s) => /^#[0-9A-Fa-f]{6}$/.test(s.color) && s.label && Array.isArray(s.sports)));
   assert.deepEqual(STANDARD_SLOTS.filter((s) => !s.countsAsCardio).map((s) => s.id), ["strength", "yoga"]);
   assert.deepEqual(NON_CARDIO_SLOTS, ["strength", "yoga"]);
@@ -544,6 +544,7 @@ ok("STANDARD_SLOTS sports are the agreed defaults, and every one is a KNOWN_SPOR
   assert.deepEqual(by, {
     strength: ["strengthTraining"], run: ["running"], walk: ["walking", "hiking"], swim: ["swimming"],
     bike: ["cycling"], yoga: ["yoga"], cardio: ["HIIT", "stairExercise", "elliptical", "cardiovascularExercise"],
+    ski: ["crossCountrySkiing"],
   });
   for (const sp of STANDARD_SLOTS.flatMap((s) => s.sports)) assert.ok(KNOWN_SPORTS.includes(sp), sp);
 });

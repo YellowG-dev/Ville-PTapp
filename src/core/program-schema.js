@@ -16,9 +16,38 @@ export const SCHEMA_VERSION = 2;
 /* ------------------------- the standard slot catalogue ---------------------- */
 
 /**
- * The seven slots every client can have (decided by John, 1 Oct 2026). A
- * catalogue, not padding: the Coach editor always offers all seven, and a slot
- * is written into a client's programme only when John adds it.
+ * The Ski slot's block template (decided 6 Oct 2026, D10; Downhill counts as
+ * cardio like XC, D10a 26 Oct). Shaped like Ville's run blocks: the session task
+ * first, then the four result fields. The result ids are shared by the three
+ * blocks, as Ville's `run-dur` is shared by his run blocks. No targets and no
+ * `cardio.sports`: the coach sets targets per client, and without a sports list
+ * a block matches through the slot's cardio type until a downhill code and a
+ * classic/skate split have actually been seen.
+ */
+const skiBlock = (label, sessionId, sessionName) => ({
+  cat: "ski",
+  label,
+  exercises: [
+    { id: sessionId, name: sessionName, sets: null, presc: "" },
+    { id: "ski-dist", name: "Distance", type: "number", unit: "km", presc: "From your watch" },
+    { id: "ski-dur", name: "Duration", type: "number", unit: "h:mm:ss", presc: "From your watch · h:mm:ss or mm:ss" },
+    { id: "ski-hr-avg", name: "Average heart rate", type: "number", unit: "bpm", presc: "From your watch" },
+    { id: "ski-hr-max", name: "Max heart rate", type: "number", unit: "bpm", presc: "From your watch" },
+  ],
+  cardio: { durationTaskId: "ski-dur", distanceTaskId: "ski-dist", hrAvgTaskId: "ski-hr-avg", hrMaxTaskId: "ski-hr-max" },
+});
+
+export const SKI_BLOCKS = {
+  "xc-classic": skiBlock("XC-Classic", "ski-classic", "Classic skiing"),
+  "xc-skate": skiBlock("XC-Skate", "ski-skate", "Skate skiing"),
+  "downhill": skiBlock("Downhill", "ski-downhill", "Downhill skiing"),
+};
+
+/**
+ * The eight slots every client can have (seven decided by John, 1 Oct 2026;
+ * Ski decided 26 Oct, built 14 Nov). A catalogue, not padding: the Coach
+ * editor always offers all eight, and a slot is written into a client's
+ * programme only when John adds it.
  *
  *   id            the slot id. Existing ids are never renamed — logged history
  *                 resolves through them.
@@ -27,9 +56,11 @@ export const SCHEMA_VERSION = 2;
  *                 the weekly cardio total. Every other slot counts, including a
  *                 client-specific one such as Juha's tennis.
  *   sports        the watch-sport codes that belong to the slot by default.
+ *   blocks        optional: block templates written into the programme when the
+ *                 slot is added (Coach editor addStandardSlot). Only Ski has one.
  *
  * Colours: strength, cardio, bike and yoga are the values already in the live
- * programmes; run, walk and swim are new, picked to sit at least ~20 CIE76
+ * programmes; run, walk, swim and ski are new, picked to sit at least ~20 CIE76
  * apart from every other slot and from the existing Testing and Activity
  * categories, with dark text legible on each in the dark theme.
  */
@@ -41,6 +72,7 @@ export const STANDARD_SLOTS = [
   { id: "bike",     label: "Bike",     color: "#6FCF97", countsAsCardio: true,  sports: ["cycling"] },
   { id: "yoga",     label: "Yoga",     color: "#A99BC9", countsAsCardio: false, sports: ["yoga"] },
   { id: "cardio",   label: "Cardio",   color: "#4CB6C4", countsAsCardio: true,  sports: ["HIIT", "stairExercise", "elliptical", "cardiovascularExercise"] },
+  { id: "ski",      label: "Ski",      color: "#B5DDF2", countsAsCardio: true,  sports: ["crossCountrySkiing"], blocks: SKI_BLOCKS },
 ];
 
 /** The two slots that are logged but are not cardio. */
@@ -212,7 +244,10 @@ export function validate(def) {
           if (!Array.isArray(blk.exercises)) E(`blocks.${g}.${key}.exercises must be an array`);
           else blk.exercises.forEach((ex, i) => {
             if (!isObj(ex)) E(`blocks.${g}.${key}.exercises[${i}] is not an object`);
-            else if (!isStr(ex.id)) E(`blocks.${g}.${key}.exercises[${i}] has no id`);
+            else {
+              if (!isStr(ex.id)) E(`blocks.${g}.${key}.exercises[${i}] has no id`);
+              if (ex.auto !== undefined) E(`blocks.${g}.${key}.exercises[${i}] carries auto — auto is only for daily tasks`);
+            }
           });
         }
         if (blk.cardio !== undefined) {
@@ -308,6 +343,7 @@ export function validate(def) {
   } else E("tracking must be an object");
 
   if (!isObj(def.daily) && !Array.isArray(def.daily)) E("daily must be an object or array");
+  else validateDailyAuto(def.daily, E);
 
   // --- programView: the generated Program tab.
   if (def.programView !== undefined) {
@@ -328,6 +364,38 @@ export function validate(def) {
   if (bad.length) E(`non-data values (function/symbol) at: ${bad.slice(0, 5).join(", ")}`);
 
   return { ok: errors.length === 0, errors, warnings };
+}
+
+/* ------------------------------ daily auto-tick ----------------------------- */
+
+/**
+ * A daily task may carry `auto: { source: "steps", min: N }` (decided 7 Oct
+ * 2026, D11): it ticks itself once that day's Oura steps reach N. Only a plain
+ * check task — no `type` — can do that, and Oura steps are the only source.
+ * Checked in `tasks` and in each `byDayType` variant's `tasks`.
+ */
+function validateDailyAuto(daily, E) {
+  const sections = Array.isArray(daily) ? daily : [];
+  sections.forEach((sec, i) => {
+    if (!isObj(sec)) return;
+    const lists = [[`daily[${i}].tasks`, sec.tasks]];
+    if (isObj(sec.byDayType)) {
+      for (const [dt, v] of Object.entries(sec.byDayType)) {
+        if (isObj(v)) lists.push([`daily[${i}].byDayType.${dt}.tasks`, v.tasks]);
+      }
+    }
+    for (const [at, tasks] of lists) {
+      if (!Array.isArray(tasks)) continue;
+      tasks.forEach((t, j) => {
+        if (!isObj(t) || t.auto === undefined) return;
+        const where = `${at}[${j}]${isStr(t.id) ? ` (${t.id})` : ""}.auto`;
+        const a = t.auto;
+        if (!isObj(a) || a.source !== "steps") E(`${where}.source must be "steps" (got ${JSON.stringify(isObj(a) ? a.source : a)})`);
+        if (!isObj(a) || !(Number.isInteger(a.min) && a.min >= 1)) E(`${where}.min must be an integer of at least 1 (got ${JSON.stringify(isObj(a) ? a.min : a)})`);
+        if (t.type !== undefined) E(`${where} is on a task with type "${t.type}" — only a plain check task can tick itself`);
+      });
+    }
+  });
 }
 
 /* -------------------------------- cardio ------------------------------------ */

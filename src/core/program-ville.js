@@ -3,15 +3,15 @@
  *
  * Built from his intake (22 Sep 2026) and John's Block 1 brief:
  *   - goals: leg strength; start fat loss through easy aerobic (PK) volume;
- *     deep (Hindi) squat, ankle mobility, best management of the toe-joint
- *     osteoarthritis. Long-term target: a 100+ km ultra in July 2027.
+ *     deep (Hindi) squat, ankle mobility. Long-term target: a 100+ km ultra
+ *     in July 2027.
  *   - week: 3 strength sessions (C can be swapped to legs-only), at least one
  *     ~2 h PK session (preferably a run), at most one VK/tempo session (bike),
  *     PK1 walking as much as fits, at least one yoga. No races.
  *   - mid-October PK/VK block is handled on the go from the Calendar, not
  *     built in here (John, 22 Sep).
  *
- * Constraint: osteoarthritis in a right-foot toe joint. No fast running for
+ * Constraint (details kept with John, not in code): no fast running for
  * long, especially on hard surfaces. Floor split squat is out; the
  * rear-foot-elevated (Bulgarian) split squat is fine. Every lift still has
  * swap options: Ville does the prescribed movement and picks an alternative
